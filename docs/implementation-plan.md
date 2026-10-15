@@ -9,7 +9,7 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 1. Repository and API foundation | Implemented; CI verified | FastAPI app factory, typed settings, versioned health endpoint and automated checks |
 | 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories and Alembic migrations |
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
-| 4. PDF ingestion | Implemented; CI pending for this phase | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
+| 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
 | 5. OCR adapters | Not started | Tesseract, EasyOCR, PaddleOCR and docTR |
 | 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
@@ -82,7 +82,7 @@ Implemented in this step:
 - Add tests for valid uploads, malformed input, size/page limits, authentication, UUID validation, lifecycle and cross-user isolation.
 
 Remaining / known limitations:
-- Confirm current changes pass CI; do not assume the prior CI result validates this phase.
+- CI passed on commit `c862ecbab097837ca3c529ec5d0feafbedcb918e`: compileall, offline Alembic SQL generation, and 21 tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38724195724
 - Test migrations against PostgreSQL.
 - Add periodic orphan-file reconciliation for crashes and filesystem/database failures.
 - Add a storage interface and private object-storage adapter before multi-instance deployment.
