@@ -103,8 +103,9 @@ Implemented:
 
 Verified on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: compilation, offline Alembic SQL generation, and all 27 tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38728100165
 
+Verified on commit `a56731e5b17598ba49a514ab54b3156de4fd1c01`: Python compilation, offline Alembic SQL generation, and the backend test suite passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38732468400
+
 Remaining validation:
-- Confirm CI passes for the current PDF renderer changes.
 - Run a native Tesseract smoke test in an environment with the executable and English trained data installed.
 - Review OCR text ordering and confidence normalization against a representative corpus.
 
