@@ -10,7 +10,16 @@ The OCR domain provides one engine-independent contract so benchmark orchestrati
 - `schemas.py`: immutable `OCRImage`, `OCRBoundingBox`, `OCRWord`, and `OCRResult` data classes.
 - `errors.py`: stable domain errors for missing dependencies, invalid input, and engine failures.
 - `tesseract.py`: Tesseract adapter, using `pytesseract.image_to_data` to return text and word-level geometry.
+- `easyocr.py`: optional EasyOCR adapter with lazy dependency/model initialization and shared normalized results.
 - `pdf_renderer.py`: bounded, incremental PDF page renderer using PyMuPDF; yields one PNG page at a time.
+
+## Optional EasyOCR setup
+
+EasyOCR is intentionally excluded from the default backend dependency set because it brings PyTorch and native computer-vision dependencies. To install it in a dedicated environment, run `pip install -r requirements-ocr-easyocr.txt` from the `backend/` directory. This optional requirements file includes the base backend requirements and pins EasyOCR to `1.7.2`; EasyOCR's transitive packages are resolved by pip and should be locked in a deployment-specific lock file before production use.
+
+`EasyOCRAdapter` is lazy: constructing it does not import EasyOCR or load models. The first recognition call initializes one shared reader, then reuses it for later pages. `download_enabled` defaults to `False`, so required model files must be provisioned in advance; this avoids model downloads triggered by a request. CPU mode is the default. Enable GPU only after validating the installed PyTorch/CUDA combination and memory budget. A lock protects model initialization and inference because reader thread-safety should not be assumed.
+
+EasyOCR's detection confidence (0–1) is converted to the common 0–100 scale. Polygon coordinates are normalized to conservative pixel-aligned rectangular bounds. This makes confidence fields comparable in representation, but not necessarily statistically comparable across engines; benchmark reports should identify the engine and avoid treating confidence as ground-truth accuracy.
 
 ## Tesseract system dependency
 
@@ -50,13 +59,13 @@ The renderer intentionally does not run OCR, persist files, or own benchmark lif
 GitHub Actions passed on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: Python compilation, offline Alembic SQL generation, and 27 backend tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38728100165.
 
 
-`backend/tests/test_ocr_tesseract.py` uses deterministic in-memory PNGs and mocks the Tesseract subprocess boundary. The unit tests do not require a native Tesseract installation and cover normalized text/words, invalid image bytes, pixel limits, timeout conversion, page numbering, and configuration validation.
+`backend/tests/test_ocr_tesseract.py` uses deterministic in-memory PNGs and mocks the Tesseract subprocess boundary. The unit tests do not require a native Tesseract installation and cover normalized text/words, invalid image bytes, pixel limits, timeout conversion, page numbering, and configuration validation. `backend/tests/test_ocr_easyocr.py` tests the optional adapter's lazy initialization, reader reuse, confidence/coordinate normalization, malformed output, and input validation without downloading EasyOCR models.
 
 ## Remaining
 
-- Add a PDF-to-PNG renderer with configurable DPI (36–600), maximum page count, maximum rendered dimension, and maximum pixels per page. It yields pages incrementally so the caller need not retain every page image in memory.
 - Add native Tesseract smoke tests in a CI job or documented local validation environment.
-- Add EasyOCR, PaddleOCR, and docTR adapters using the same contract.
+- Validate EasyOCR against a real sample corpus with provisioned model files and benchmark its RAM/latency footprint.
+- Add PaddleOCR and docTR adapters using the same contract.
 - Add a registry/factory and benchmark orchestration only after adapter contracts are stable.
 - Record adapter configuration and engine/model versions with each benchmark result.
 - Validate language-specific behavior and reading-order assumptions against a representative document corpus.
