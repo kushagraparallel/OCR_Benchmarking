@@ -1,11 +1,12 @@
 """Unit tests for the optional EasyOCR adapter without downloading models."""
 
+import importlib.metadata
 from unittest.mock import Mock, patch
 
 from PIL import Image
 import pytest
 
-from app.core.ocr.errors import OCRDependencyError, OCRInputError
+from app.core.ocr.errors import OCRDependencyError, OCRExecutionError, OCRInputError
 from app.core.ocr.easyocr import EasyOCRAdapter
 from app.core.ocr.schemas import OCRImage
 
@@ -22,7 +23,7 @@ def test_get_version_reports_missing_optional_dependency() -> None:
     adapter = EasyOCRAdapter()
     with patch(
         "app.core.ocr.easyocr.importlib.metadata.version",
-        side_effect=__import__("importlib").metadata.PackageNotFoundError,
+        side_effect=importlib.metadata.PackageNotFoundError,
     ):
         with pytest.raises(OCRDependencyError, match="EasyOCR is not installed"):
             adapter.get_version()
@@ -61,12 +62,12 @@ def test_normalize_detections_converts_polygon_and_confidence() -> None:
     assert words[0].bounding_box.y == 20
     assert words[0].bounding_box.width == 30
     assert words[0].bounding_box.height == 12
-    assert words[0].confidence == 0.95
+    assert words[0].confidence == 95.0
 
 
 def test_normalize_detections_rejects_malformed_data() -> None:
     """Unexpected engine output must not be silently recorded as a successful result."""
-    with pytest.raises(Exception, match="malformed detection data"):
+    with pytest.raises(OCRExecutionError, match="malformed detection data"):
         EasyOCRAdapter._normalize_detections([("bad",)])
 
 
