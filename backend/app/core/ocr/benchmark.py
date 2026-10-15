@@ -3,14 +3,14 @@
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from app.core.ocr.base import OCRAdapter
 from app.core.ocr.errors import OCRAdapterError, OCRInputError
-from app.core.ocr.pdf_renderer import PDFPageRenderer
+from app.core.ocr.pdf_renderer import PDFPageRenderer, RenderedPDFPage
 from app.core.ocr.schemas import OCRImage, OCRResult
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,6 @@ class OCRBenchmarkRunner:
         page_count = 0
         rendered_bytes = 0
         engine_durations = {name: 0.0 for name in normalized_adapters}
-        page_iterator = None
         renderer_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr-pdf-render")
         event_loop = asyncio.get_running_loop()
 
@@ -198,7 +197,7 @@ class OCRBenchmarkRunner:
         )
 
     @staticmethod
-    def _next_page(page_iterator):
+    def _next_page(page_iterator: Iterator[RenderedPDFPage]) -> RenderedPDFPage | None:
         """Advance a lazy renderer without leaking StopIteration through asyncio."""
         sentinel = object()
         page = next(page_iterator, sentinel)
