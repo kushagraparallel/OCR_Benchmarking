@@ -69,7 +69,7 @@ class DocTRAdapter(OCRAdapter):
 
         try:
             doctr_io = importlib.import_module("doctr.io")
-            document = doctr_io.DocumentFile.from_images(image.image_bytes)
+            document = doctr_io.DocumentFile.from_images([image.image_bytes])
             start_time = time.perf_counter()
             with self._predictor_lock:
                 prediction = predictor(document)
