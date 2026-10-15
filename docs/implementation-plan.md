@@ -6,9 +6,9 @@ This document is the source of truth for implemented scope, outstanding work, an
 
 | Phase | Status | Notes |
 |---|---|---|
-| 1. Repository and API foundation | Implemented; CI must be verified | FastAPI app factory, typed settings, versioned health endpoint, initial tests and CI workflow |
-| 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories, Alembic and initial authentication schema migration |
-| 3. Authentication and sessions | Implemented; CI and PostgreSQL concurrency validation pending | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
+| 1. Repository and API foundation | Implemented; CI verified | FastAPI app factory, typed settings, versioned health endpoint and automated checks |
+| 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories, Alembic and authentication schema migration |
+| 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation, session endpoints and API tests |
 | 4. PDF ingestion | Not started | PDF validation, limits, private storage and metadata |
 | 5. OCR adapters | Not started | Tesseract, EasyOCR, PaddleOCR and docTR |
 | 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
@@ -24,8 +24,11 @@ Implemented:
 - Initial API tests and pinned dependencies.
 - GitHub Actions workflow for Python compilation and pytest.
 
+Validation:
+- GitHub Actions passed on commit `9ef1f505077557b12c50d4cb1123b1cdc8506f97`: compileall, offline Alembic migration generation, and 12 tests passed.
+- Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38720437656
+
 Remaining:
-- Confirm successful GitHub Actions checks.
 - Add linting and type checking with pinned tool versions.
 - Add request IDs and consistent structured error responses in a later hardening pass.
 
@@ -38,12 +41,16 @@ Implemented:
 - Shared declarative base and repository layer.
 - Alembic configuration/environment/template.
 - Initial migration creating users, user_sessions and refresh_tokens.
-- SQLite unit-test support.
+- SQLite-backed unit-test support.
+
+Validation:
+- Alembic offline SQL generation succeeds in CI.
+- PostgreSQL migration upgrade/downgrade and database-backed integration testing have not yet been run.
 
 Remaining:
 - Verify migration upgrade/downgrade against PostgreSQL.
 - Add PostgreSQL service-backed CI integration tests.
-- Add explicit database readiness checks when application startup/operations require database availability.
+- Add explicit database readiness checks when application operations require database availability.
 - Review schema diffs and migration naming on each schema change.
 
 ## Phase 3 — Authentication and sessions
@@ -60,11 +67,14 @@ Implemented:
 - Authentication API integration tests and security primitive tests.
 - Authentication architecture and known-limitations documentation.
 
+Validation:
+- CI passed on commit `9ef1f505077557b12c50d4cb1123b1cdc8506f97`: compilation, migration SQL generation, and 12 tests passed.
+- The integration tests use in-memory SQLite. They do not validate PostgreSQL migration behavior or refresh-token concurrency on PostgreSQL.
+
 Remaining:
-- Run CI and resolve any failing tests before merging.
-- Validate migrations and refresh-token concurrency behavior on PostgreSQL.
+- Add PostgreSQL migration and refresh-concurrency tests.
 - Add login/register rate limiting before public deployment.
-- Add email verification, password reset, and account recovery.
+- Add email verification, password reset and account recovery.
 - Add CSRF protection if deployment topology requires cross-site cookies; current design assumes same-site frontend/API.
 - Consider account lockout/abuse monitoring and security audit events.
 - Add lint/type-check rules and coverage thresholds.
