@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from PIL import Image
 import pytest
-from pytesseract.pytesseract import TesseractTimeoutError
 
 from app.core.ocr.errors import OCRExecutionError, OCRInputError
 from app.core.ocr.schemas import OCRImage
@@ -83,7 +82,7 @@ def test_recognize_converts_engine_timeout_to_domain_error() -> None:
         patch.object(adapter, "get_version", return_value="5.4.1"),
         patch(
             "app.core.ocr.tesseract.pytesseract.image_to_data",
-            side_effect=TesseractTimeoutError("timed out"),
+            side_effect=RuntimeError("Tesseract process timeout"),
         ),
         pytest.raises(OCRExecutionError, match="exceeded"),
     ):
