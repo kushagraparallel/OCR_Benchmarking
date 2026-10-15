@@ -12,7 +12,7 @@ from typing import Any
 from PIL import Image, UnidentifiedImageError
 
 from app.core.ocr.base import OCRAdapter
-from app.core.ocr.errors import OCRDependencyError, OCRExecutionError, OCRInputError
+from app.core.ocr.errors import OCRAdapterError, OCRDependencyError, OCRExecutionError, OCRInputError
 from app.core.ocr.schemas import OCRBoundingBox, OCRImage, OCRResult, OCRWord
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class EasyOCRAdapter(OCRAdapter):
             with self._reader_lock:
                 detections = reader.readtext(image_array, detail=1, paragraph=False)
             duration_ms = (time.perf_counter() - start_time) * 1000
-        except OCRAdapterErrorPassthrough:
+        except OCRAdapterError:
             raise
         except Exception as exc:
             logger.exception("EasyOCR failed while recognizing page %s", image.page_number)
@@ -192,7 +192,3 @@ class EasyOCRAdapter(OCRAdapter):
     def _build_text(words: tuple[OCRWord, ...]) -> str:
         """Join detected text in the reading order returned by EasyOCR."""
         return "\n".join(word.text for word in words)
-
-
-class OCRAdapterErrorPassthrough(Exception):
-    """Internal marker retained only for explicit exception handling."""
