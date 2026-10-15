@@ -30,6 +30,10 @@ class Settings(BaseSettings):
         default=["http://localhost:5173"],
         description="Explicit frontend origins permitted to access the API.",
     )
+    database_url: str = Field(
+        default="postgresql+psycopg://ocrlab:ocrlab@localhost:5432/ocrlab",
+        description="SQLAlchemy database URL; override through the DATABASE_URL environment variable.",
+    )
 
 
 @lru_cache(maxsize=1)
