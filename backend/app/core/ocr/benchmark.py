@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from app.core.ocr.base import OCRAdapter
@@ -75,6 +76,7 @@ class OCRBenchmarkRunner:
         self,
         pdf_bytes: bytes,
         adapters: dict[str, OCRAdapter],
+        should_cancel: Callable[[], Awaitable[bool]] | None = None,
     ) -> BenchmarkResult:
         """Execute engines independently and preserve successful partial results."""
         if not adapters:
@@ -93,6 +95,8 @@ class OCRBenchmarkRunner:
         try:
             page_iterator = await asyncio.to_thread(iter, self._renderer.render_pages(pdf_bytes))
             while True:
+                if should_cancel is not None and await should_cancel():
+                    raise asyncio.CancelledError("Benchmark cancellation requested.")
                 page = await asyncio.to_thread(self._next_page, page_iterator)
                 if page is None:
                     break
