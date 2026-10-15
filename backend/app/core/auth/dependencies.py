@@ -1,5 +1,6 @@
 """FastAPI dependencies for resolving authenticated users."""
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 import jwt
@@ -38,15 +39,20 @@ def get_current_user(
     repository = AuthRepository(database_session)
     user = repository.get_user_by_id(user_id)
     user_session = repository.get_session(session_id)
+    now = datetime.now(timezone.utc)
+    if user_session is not None and user_session.expires_at.tzinfo is None:
+        session_expiry = user_session.expires_at.replace(tzinfo=timezone.utc)
+    elif user_session is not None:
+        session_expiry = user_session.expires_at.astimezone(timezone.utc)
+    else:
+        session_expiry = now
     if (
         user is None
         or not user.is_active
         or user_session is None
         or user_session.user_id != user.id
         or user_session.revoked_at is not None
+        or session_expiry <= now
     ):
         raise unauthorized
     return user
-
-
-CurrentUser = Annotated[User, Depends(get_current_user)]
