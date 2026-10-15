@@ -16,7 +16,7 @@ from app.db.repositories.document_repository import DocumentRepository
 from app.models.document import DocumentRecord
 
 logger = logging.getLogger(__name__)
-_UNSAFE_FILENAME_CHARACTERS = re.compile(r"[\\x00-\\x1f\\x7f]")
+_UNSAFE_FILENAME_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class DocumentService:
