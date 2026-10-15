@@ -13,8 +13,8 @@ import signal
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -94,7 +94,7 @@ def _is_cancel_requested(job_id: str) -> bool:
     """Read the durable cancellation flag using a short-lived database session."""
     with SessionFactory() as session:
         job = session.get(BenchmarkJob, job_id)
-        return job is None or job.status in {"cancellation_requested", "cancelled"}
+        return job is None or job.status != "running"
 
 
 def _renew_lease(job_id: str, lease_seconds: int) -> bool:
@@ -112,7 +112,10 @@ async def _lease_heartbeat(job_id: str, slot_id: int, worker_id: str, lease_seco
         slot_renewed = await asyncio.to_thread(
             _renew_worker_slot, slot_id, worker_id, lease_seconds
         )
-        if not job_renewed or not slot_renewed:
+        if not job_renewed:
+            logger.warning("Benchmark job %s lease could not be renewed", job_id)
+        if not slot_renewed:
+            logger.warning("Worker slot %s lease was lost by worker %s", slot_id, worker_id)
             return
 
 
