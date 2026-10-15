@@ -23,7 +23,7 @@ from app.config import get_settings
 from app.core.documents.storage import LocalDocumentStorage
 from app.core.ocr.benchmark import BenchmarkConfig, OCRBenchmarkRunner
 from app.core.ocr.pdf_renderer import PDFPageRenderer
-from app.core.ocr.registry import create_default_ocr_factory
+from app.core.ocr.registry import create_configured_ocr_factory
 from app.db.database import SessionFactory
 from app.db.repositories.benchmark_job_repository import BenchmarkJobRepository
 from app.models.benchmark_job import BenchmarkJob
@@ -121,7 +121,7 @@ async def _execute_job(job_id: str) -> None:
     try:
         pdf_path: Path = storage.resolve_storage_key(storage_key)
         pdf_bytes = await asyncio.to_thread(pdf_path.read_bytes)
-        factory = create_default_ocr_factory()
+        factory = create_configured_ocr_factory()
         adapters = factory.create_many(engine_names)
         runner = OCRBenchmarkRunner(
             PDFPageRenderer(
