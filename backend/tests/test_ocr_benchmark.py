@@ -19,6 +19,10 @@ from app.core.ocr.schemas import OCRBoundingBox, OCRImage, OCRResult, OCRWord
 class FakeAdapter(OCRAdapter):
     """Deterministic synchronous adapter for orchestration tests."""
 
+    global_active = 0
+    global_max_active = 0
+    global_lock = threading.Lock()
+
     def __init__(self, name: str, *, delay: float = 0, fail: bool = False) -> None:
         self._name = name
         self.delay = delay
@@ -36,9 +40,13 @@ class FakeAdapter(OCRAdapter):
         return "test"
 
     def recognize(self, image: OCRImage) -> OCRResult:
-        with self._lock:
+        with self._lock, self.global_lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
+            type(self).global_active += 1
+            type(self).global_max_active = max(
+                type(self).global_max_active, type(self).global_active
+            )
         try:
             self.seen_images.append(image.image_bytes)
             if self.delay:
@@ -55,8 +63,9 @@ class FakeAdapter(OCRAdapter):
                 duration_ms=1.0,
             )
         finally:
-            with self._lock:
+            with self._lock, self.global_lock:
                 self.active -= 1
+                type(self).global_active -= 1
 
 
 class FakeRenderer:
@@ -137,10 +146,12 @@ async def test_concurrency_is_bounded() -> None:
         BenchmarkConfig(engine_timeout_seconds=2, max_concurrent_engines=1),
     )
     adapters = {name: FakeAdapter(name, delay=0.02) for name in ("a", "b", "c")}
+    FakeAdapter.global_active = 0
+    FakeAdapter.global_max_active = 0
 
     await runner.run(b"pdf", adapters)
 
-    assert sum(adapter.max_active for adapter in adapters.values()) == 3
+    assert FakeAdapter.global_max_active == 1
     assert all(adapter.max_active == 1 for adapter in adapters.values())
 
 
@@ -210,3 +221,26 @@ def test_invalid_benchmark_configuration_is_rejected() -> None:
         BenchmarkConfig(max_concurrent_engines=0)
     with pytest.raises(ValueError, match="max_total_rendered_image_bytes"):
         BenchmarkConfig(max_total_rendered_image_bytes=0)
+
+
+@pytest.mark.asyncio
+async def test_real_pdf_renderer_integrates_with_multiple_engines() -> None:
+    """A real multi-page PDF is rendered once per page and recognized by both adapters."""
+    document = fitz.open()
+    document.new_page(width=72, height=72)
+    document.new_page(width=72, height=72)
+    pdf_bytes = document.tobytes()
+    document.close()
+
+    renderer = PDFPageRenderer(dpi=72, max_pages=2)
+    runner = OCRBenchmarkRunner(renderer)
+    first, second = FakeAdapter("first"), FakeAdapter("second")
+
+    result = await runner.run(pdf_bytes, {"first": first, "second": second})
+
+    assert result.status == "success"
+    assert result.page_count == 2
+    assert len(result.engines["first"].results) == 2
+    assert len(result.engines["second"].results) == 2
+    assert first.seen_images == second.seen_images
+    assert all(payload.startswith(b"\\x89PNG\\r\\n\\x1a\\n") for payload in first.seen_images)
