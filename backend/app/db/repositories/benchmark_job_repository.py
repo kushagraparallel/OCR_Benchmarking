@@ -46,7 +46,7 @@ class BenchmarkJobRepository:
                 or_(
                     BenchmarkJob.status == "queued",
                     (
-                        (BenchmarkJob.status == "running")
+                        (BenchmarkJob.status.in_(("running", "cancellation_requested")))
                         & BenchmarkJob.lease_expires_at.is_not(None)
                         & (BenchmarkJob.lease_expires_at < now)
                     ),
@@ -58,6 +58,12 @@ class BenchmarkJobRepository:
         )
         job = self._session.scalar(statement)
         if job is None:
+            return None
+        if job.status == "cancellation_requested":
+            job.status = "cancelled"
+            job.finished_at = now
+            job.lease_expires_at = None
+            self._session.commit()
             return None
         job.status = "running"
         job.started_at = now
