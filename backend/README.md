@@ -60,10 +60,10 @@ Review migration scripts before applying them. To inspect history, run `alembic 
 
 ## Validation
 
-GitHub Actions passed on commit `9ef1f505077557b12c50d4cb1123b1cdc8506f97`:
+GitHub Actions passed on commit `6322d4c293ff78ca6f0ae5bb867c04fe016972c2`:
 - Python compilation of application, tests and migrations.
 - Offline Alembic SQL generation.
-- 12 backend tests passed.
+- 14 backend tests passed.
 
 Run the same checks locally from the repository root:
 
