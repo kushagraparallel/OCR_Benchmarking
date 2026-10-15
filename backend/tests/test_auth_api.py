@@ -2,7 +2,6 @@
 
 from collections.abc import Generator
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -51,7 +50,6 @@ def test_registration_normalizes_email_and_rejects_duplicates(client: TestClient
         "/api/v1/auth/register",
         json={"email": "tester@example.com", "password": "Strong-password-123"},
     )
-
     assert duplicate_response.status_code == 409
 
 
@@ -71,8 +69,7 @@ def test_login_me_refresh_and_logout(client: TestClient) -> None:
 
     access_token = login_payload["access_token"]
     headers = {"Authorization": f"Bearer {access_token}"}
-    profile_response = client.get("/api/v1/auth/me", headers=headers)
-    assert profile_response.status_code == 200
+    assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
 
     refresh_response = client.post("/api/v1/auth/refresh", cookies={"ocrlab_refresh": original_refresh_cookie})
     assert refresh_response.status_code == 200
@@ -82,8 +79,7 @@ def test_login_me_refresh_and_logout(client: TestClient) -> None:
 
     logout_response = client.post("/api/v1/auth/logout", cookies={"ocrlab_refresh": rotated_cookie})
     assert logout_response.status_code == 200
-    rejected_profile = client.get("/api/v1/auth/me", headers=headers)
-    assert rejected_profile.status_code == 401
+    assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
 
 
 def test_reuse_of_consumed_refresh_token_revokes_session(client: TestClient) -> None:
@@ -101,17 +97,13 @@ def test_reuse_of_consumed_refresh_token_revokes_session(client: TestClient) -> 
     assert first_refresh.status_code == 200
     replay_response = client.post("/api/v1/auth/refresh", cookies={"ocrlab_refresh": old_cookie})
     assert replay_response.status_code == 401
-
-    profile_response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"})
-    assert profile_response.status_code == 401
+    assert client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"}).status_code == 401
 
 
 def test_session_endpoints_are_authenticated_and_scoped(client: TestClient) -> None:
     """Session listing requires authentication and does not expose refresh secrets."""
     register_user(client)
-    unauthenticated_response = client.get("/api/v1/sessions")
-    assert unauthenticated_response.status_code == 401
-
+    assert client.get("/api/v1/sessions").status_code == 401
     login_response = client.post(
         "/api/v1/auth/login",
         json={"email": "tester@example.com", "password": "Strong-password-123"},
@@ -130,6 +122,5 @@ def test_login_rejects_incorrect_password(client: TestClient) -> None:
         "/api/v1/auth/login",
         json={"email": "tester@example.com", "password": "incorrect-password"},
     )
-
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid email or password."
