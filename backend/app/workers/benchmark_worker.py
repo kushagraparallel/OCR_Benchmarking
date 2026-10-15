@@ -46,7 +46,15 @@ def _load_job_inputs(job_id: str) -> tuple[str, list[str], str] | None:
     """Read the source document reference and selected engines in a short transaction."""
     with SessionFactory() as session:
         job = session.get(BenchmarkJob, job_id)
-        if job is None or job.status != "running":
+        if job is None:
+            return None
+        if job.status == "cancellation_requested":
+            job.status = "cancelled"
+            job.finished_at = datetime.now(timezone.utc)
+            job.lease_expires_at = None
+            session.commit()
+            return None
+        if job.status != "running":
             return None
         document = session.scalar(
             select(DocumentRecord).where(DocumentRecord.id == job.document_id)
