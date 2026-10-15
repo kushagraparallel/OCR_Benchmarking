@@ -90,7 +90,7 @@ python -m compileall -q backend/app backend/tests backend/migrations
 python -m pytest backend/tests -q
 \`\`\`
 
-Document API tests use an isolated in-memory SQLite database and temporary private storage. They cover valid uploads, invalid content, size/page limits, UUID validation, authentication, ownership isolation, and basic lifecycle operations. These tests do not establish PostgreSQL migration compatibility or production filesystem durability.
+GitHub Actions passed on commit `c862ecbab097837ca3c529ec5d0feafbedcb918e`: Python compilation, offline Alembic SQL generation, and 21 tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38724195724. Document API tests use an isolated in-memory SQLite database and temporary private storage. They do not establish PostgreSQL migration compatibility or production filesystem durability.
 
 ## Security boundaries and known gaps
 
