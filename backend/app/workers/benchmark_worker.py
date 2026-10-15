@@ -179,6 +179,7 @@ async def _execute_job(job_id: str, concurrency_semaphore: asyncio.Semaphore, sl
                 should_cancel=lambda: asyncio.to_thread(_is_cancel_requested, job_id),
             )
         finally:
+            await runner.wait_for_native_calls()
             heartbeat.cancel()
             try:
                 await heartbeat
