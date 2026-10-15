@@ -155,6 +155,27 @@ async def test_concurrency_is_bounded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_each_engines_duration_reflects_its_own_execution_time() -> None:
+    """A slow engine running alongside a fast one must not inflate the fast one's duration.
+
+    Both tasks for a page are awaited together via one asyncio.gather() call.
+    Timing each engine from a shared post-gather reference point would record
+    how long the slowest sibling took for every engine, masking real
+    performance differences that this benchmarking tool exists to surface.
+    """
+    renderer = FakeRenderer(pages=1)
+    runner = OCRBenchmarkRunner(
+        renderer,
+        BenchmarkConfig(engine_timeout_seconds=5, max_concurrent_engines=2),
+    )
+    fast, slow = FakeAdapter("fast", delay=0.01), FakeAdapter("slow", delay=0.25)
+
+    result = await runner.run(b"pdf", {"fast": fast, "slow": slow})
+
+    assert result.engines["fast"].duration_ms < result.engines["slow"].duration_ms / 2
+
+
+@pytest.mark.asyncio
 async def test_timeout_is_recorded_and_other_engine_succeeds() -> None:
     """An engine timeout is isolated and does not block a healthy engine result."""
     renderer = FakeRenderer(pages=1)

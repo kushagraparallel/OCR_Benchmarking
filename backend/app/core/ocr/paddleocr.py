@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LANGUAGE = "en"
 DEFAULT_MAX_IMAGE_PIXELS = 40_000_000
+# PaddleOCR's own default (960) silently downscales the longer side of every
+# input before detection. Rendered PDF pages routinely exceed that (e.g. a
+# standard page at 200 DPI is ~2300px tall), which shrinks small body text
+# below a detectable size and yields an empty, silently "successful" result.
+# This default instead matches PDFPageRenderer's configured ceiling
+# (max_page_dimension_pixels=10_000 in the worker), so PaddleOCR never
+# re-downscales an image our own pipeline already decided was acceptable.
+DEFAULT_DETECTION_IMAGE_SIDE_LIMIT = 10_000
 
 
 class PaddleOCRAdapter(OCRAdapter):
@@ -38,11 +46,14 @@ class PaddleOCRAdapter(OCRAdapter):
         use_angle_classification: bool = True,
         use_gpu: bool = False,
         max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+        detection_image_side_limit: int = DEFAULT_DETECTION_IMAGE_SIDE_LIMIT,
     ) -> None:
         if not language.strip():
             raise ValueError("language must not be empty.")
         if max_image_pixels < 1:
             raise ValueError("max_image_pixels must be a positive integer.")
+        if detection_image_side_limit < 1:
+            raise ValueError("detection_image_side_limit must be a positive integer.")
         if use_angle_classification and classification_model_directory is None:
             raise ValueError(
                 "classification_model_directory is required when angle classification is enabled."
@@ -65,6 +76,7 @@ class PaddleOCRAdapter(OCRAdapter):
         self._use_angle_classification = use_angle_classification
         self._use_gpu = use_gpu
         self._max_image_pixels = max_image_pixels
+        self._detection_image_side_limit = detection_image_side_limit
         self._engine: Any | None = None
         self._engine_lock = threading.Lock()
 
@@ -138,6 +150,7 @@ class PaddleOCRAdapter(OCRAdapter):
                         if self._classification_model_directory is not None
                         else None
                     ),
+                    det_limit_side_len=self._detection_image_side_limit,
                     show_log=False,
                 )
             except ModuleNotFoundError as exc:

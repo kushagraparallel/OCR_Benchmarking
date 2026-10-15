@@ -10,6 +10,7 @@ predictable. Multiple workers coordinate through leases stored in PostgreSQL.
 import asyncio
 import logging
 import signal
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +35,31 @@ logger = logging.getLogger(__name__)
 _STOP_REQUESTED = False
 _WORKER_FACTORY: OCREngineFactory | None = None
 _WORKER_ADAPTERS: dict[str, OCRAdapter] = {}
+
+
+def _import_torch_before_paddle_on_windows() -> None:
+    """Work around a Windows-only native DLL load-order conflict.
+
+    If PaddlePaddle's native runtime loads first in a process, it leaves
+    PyTorch's own ``shm.dll`` unable to resolve a dependency ("WinError 127:
+    The specified procedure could not be found"), breaking any torch-based
+    engine (EasyOCR, docTR) for the rest of the process's lifetime. Adapter
+    imports are otherwise lazy and happen in whatever order asyncio schedules
+    recognize() calls, which varies between runs. Importing torch once,
+    unconditionally, before any adapter is used guarantees the safe order.
+    Harmless no-op when torch is not installed (tesseract/paddleocr-only
+    deployments) or on non-Windows platforms, which do not exhibit this
+    conflict.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        pass
+
+
+_import_torch_before_paddle_on_windows()
 
 
 def _request_stop(signum: int, frame: object) -> None:

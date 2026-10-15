@@ -53,6 +53,29 @@ Protected endpoints require an \`Authorization: Bearer <access_token>\` header. 
 
 The OCR layer under `app/core/ocr/` defines a shared adapter contract, implements Tesseract, and includes bounded incremental PDF-to-PNG page rendering. The renderer enforces configurable DPI, page-count, dimension, and pixel limits. Python packages are installed from the pinned requirements file, but the native Tesseract executable and language data must be installed separately. See [OCR adapter documentation](app/core/ocr/README.md) for setup and validation details.
 
+### Enabling EasyOCR, PaddleOCR, and docTR (optional, all verified working end-to-end)
+
+Tesseract is the only engine enabled by default. The other three are real, heavy ML dependencies (PyTorch, PaddlePaddle) excluded from the base install; enabling all three together adds roughly **1.5–2 GB** to the virtual environment. Most of that is each package's own hard dependencies (e.g. PaddleOCR pulls in its full toolkit, not just detection/recognition), not something trimmable without risking `ImportError`s — the one real waste (duplicate `opencv-python`/`opencv-contrib-python`/`opencv-python-headless` installs) turned out to be a hard requirement of PaddleOCR/docTR/imgaug too, not safely removable.
+
+```powershell
+# 1. Install the optional engines (from backend/)
+python -m pip install -r requirements-ocr-easyocr.txt -r requirements-ocr-paddleocr.txt -r requirements-ocr-doctr.txt
+
+# 2. Download and cache each engine's model weights once (see app/core/ocr/README.md)
+$env:PYTHONPATH = "."
+$env:PYTHONIOENCODING = "utf-8"   # avoids a UnicodeEncodeError from EasyOCR's download progress bar on Windows
+$env:PYTHONUTF8 = "1"
+python -m scripts.provision_ocr_models --engines easyocr,paddleocr,doctr
+
+# 3. Copy the settings the script prints into backend/.env, then enable them:
+# OCR_ENABLED_ENGINES=["tesseract", "easyocr", "paddleocr", "doctr"]
+
+# 4. Restart the API and the worker so they pick up the new settings
+# (get_settings() is cached per-process; editing .env does not hot-reload it)
+```
+
+All four engines have been run together against the real worker (not mocks), repeatedly, with distinct per-engine durations and correct text extraction. Doing this surfaced and fixed three real defects — a PaddleOCR detection-resolution bug, a benchmark-duration measurement bug, and a Windows-only native DLL load-order conflict between PaddlePaddle and PyTorch — documented in full in [the OCR adapter README](app/core/ocr/README.md#known-native-runtime-issues-found-by-running-all-four-engines-together).
+
 ## Benchmark execution
 
 Benchmark jobs are queued through the API and executed by a separate worker process, never inline in a request handler:

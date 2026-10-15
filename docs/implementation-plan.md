@@ -10,8 +10,8 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories and Alembic migrations |
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
-| 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR/PaddleOCR/docTR adapters implemented | Normalized result schema, bounded incremental rendering, lazy model initialization for three optional engines, normalized detection output, mocked adapter tests; native engine validation pending |
-| 6. Benchmark execution and evaluation | In progress; native Tesseract path verified end-to-end | Engine factory, bounded runner, PostgreSQL-backed job queue, authenticated lifecycle API, worker leases, cooperative cancellation, and mocked/API tests implemented; a missing `wait_for_native_calls` method was found and fixed during end-to-end verification (see Phase 6 follow-up). EasyOCR/PaddleOCR/docTR native validation, evaluation metrics and hard process isolation remain |
+| 5. OCR adapters and PDF rendering | In progress; all four engines (Tesseract, EasyOCR, PaddleOCR, docTR) verified end-to-end against real models | Normalized result schema, bounded incremental rendering, lazy model initialization, normalized detection output, mocked adapter tests, plus a committed model-provisioning script (`backend/scripts/provision_ocr_models.py`); a real PaddleOCR detection-resolution bug and a Windows-only PaddlePaddle/PyTorch DLL conflict were found and fixed during end-to-end verification (see Phase 6 follow-up) |
+| 6. Benchmark execution and evaluation | In progress; all four engines verified end-to-end, including running together in one worker process | Engine factory, bounded runner, PostgreSQL-backed job queue, authenticated lifecycle API, worker leases, cooperative cancellation, and mocked/API tests implemented; three real defects found and fixed during end-to-end verification — a missing `wait_for_native_calls` method, per-engine duration measurement collapsing to the slowest sibling's time, and a PaddleOCR/PyTorch DLL load-order conflict (see Phase 6 follow-up). Evaluation metrics and hard process isolation remain |
 | 7. Frontend and reporting | Implemented (initial) | React/TypeScript console (`frontend/`) covering auth, documents, benchmarks and sessions against the live API; charts and exports not started |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
 
@@ -109,19 +109,21 @@ Verified on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: compilation, offl
 
 Verified on commit `a56731e5b17598ba49a514ab54b3156de4fd1c01`: Python compilation, offline Alembic SQL generation, and the backend test suite passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38732468400
 
+Also implemented, during end-to-end verification of all four engines together:
+- Wired docTR into `create_configured_ocr_factory()` with new `OCR_DOCTR_DET_ARCH`/`OCR_DOCTR_RECO_ARCH`/`OCR_DOCTR_CACHE_DIRECTORY` settings and a lazily-constructed predictor factory (`app/core/ocr/registry.py`); `"doctr"` added to the supported-engine set. `backend/tests/test_ocr_registry.py` covers all four engines' validation paths, including confirming docTR registration never imports the real `doctr` package.
+- `backend/scripts/provision_ocr_models.py`: a committed, idempotent script that downloads and caches real model weights for EasyOCR, PaddleOCR, and docTR using each engine's own library, then prints the `.env` settings to enable it.
+- Fixed a real PaddleOCR correctness bug: its default `det_limit_side_len` (960) downscales any input image before detection, silently losing ordinary body text on pages rendered above ~960px (the common case — see Phase 6 follow-up for the full writeup). `PaddleOCRAdapter` now takes a `detection_image_side_limit` parameter (default `10_000`, matching the worker's renderer ceiling).
+
+Verified end-to-end on Windows, repeatedly: all four engines (Tesseract, EasyOCR, PaddleOCR, docTR) registered, selected together in one benchmark job, and completed successfully through the real API + worker + PostgreSQL queue, each returning correct normalized text for a real test document.
+
 Remaining validation:
-- Native Tesseract smoke test passed end-to-end through the real queue/worker path (register → upload → submit → poll → `completed`, with normalized per-page text, word boxes and confidence). See Phase 6 follow-up.
-- Run equivalent smoke tests for EasyOCR and PaddleOCR once local model directories are provisioned.
-- Review OCR text ordering and confidence normalization against a representative corpus.
+- Native Tesseract, EasyOCR, PaddleOCR, and docTR smoke tests have all now passed end-to-end through the real queue/worker path (register → upload → submit → poll → `completed`, with normalized per-page text, word boxes and confidence). See Phase 6 follow-up for the three bugs this surfaced.
+- Review OCR text ordering and confidence normalization against a representative corpus. One real observation so far: EasyOCR and PaddleOCR both returned an entire line as a single "word" on a short single-line test page, while Tesseract and docTR split per word on the same input — a genuine cross-engine detection-granularity difference, not a normalization bug, but unvalidated against multi-word/multi-line documents.
 
 Remaining:
-- Validate EasyOCR, PaddleOCR, and docTR on real documents with model files pre-provisioned; measure cold-start time, inference latency, and memory.
-- Add optional docTR adapter with a required predictor factory so architecture and local-weight policy remain application-controlled.
-- Normalize docTR export page dimensions, relative word geometry, confidence, empty output, and malformed result errors.
-- Add a pinned optional docTR/PyTorch dependency file and mocked adapter tests.
-- Add an adapter registry/factory after the initial adapters are validated.
+- Validate EasyOCR, PaddleOCR, and docTR against a larger real-document corpus; measure cold-start time, inference latency, and memory systematically (a handful of manual runs confirmed correctness, not performance characteristics).
 - Persist engine configuration/version metadata with benchmark results.
-- Add native-runtime CI coverage and multilingual fixtures.
+- Add native-runtime CI coverage (currently manual/local only — pinned optional dependencies add ~1.5–2 GB and real model downloads, which is a deliberate reason this is not yet in the CI matrix) and multilingual fixtures.
 
 ## Phase 6 — Benchmark execution and evaluation
 
@@ -192,7 +194,7 @@ Implemented on the current branch:
 - Added authenticated endpoints: GET /api/v1/benchmarks/engines, POST /api/v1/benchmarks (202 Accepted), GET /api/v1/benchmarks, GET /api/v1/benchmarks/{job_id}, and DELETE /api/v1/benchmarks/{job_id}. Job history and status are owner-scoped.
 - Added a database-backed polling worker. PostgreSQL FOR UPDATE SKIP LOCKED coordinates claims across worker processes; leases are renewed during execution and expired running jobs can be recovered up to OCR_WORKER_MAX_ATTEMPTS.
 - Added cooperative cancellation at page boundaries and worker-local adapter reuse so model initialization is amortized across jobs.
-- Added configured engine selection. Tesseract is enabled by default; EasyOCR and PaddleOCR require explicit local model directories. docTR remains unavailable through the worker registry until its predictor factory/model-loading configuration is provided.
+- Added configured engine selection. Tesseract is enabled by default; EasyOCR, PaddleOCR, and docTR each require explicit local model directories/cache paths (see Phase 5).
 - Added tests for authenticated job submission/history/cancellation/ownership, queue claims, lease renewal, and existing OCR orchestration failure/resource scenarios.
 
 Operations:
@@ -201,11 +203,15 @@ Operations:
 - `OCR_MAX_CONCURRENT_BENCHMARK_JOBS` enforces a shared active-job ceiling across all worker processes. Worker count controls available processing capacity but cannot exceed the slot limit. `OCR_MAX_CONCURRENT_ENGINES` controls inference concurrency inside each job, so the approximate inference ceiling is configured active jobs multiplied by per-job inference concurrency.
 
 Fixed during end-to-end verification:
-- `app/workers/benchmark_worker.py` called `OCRBenchmarkRunner.wait_for_native_calls()` after `run()` to keep deployment-wide capacity reserved until native OCR threads actually exit, but `OCRBenchmarkRunner` never defined that method — every job failed with `AttributeError` immediately after rendering/recognition completed, before any job had ever reached `completed`. Added the method in `app/core/ocr/benchmark.py`; it awaits the existing `_native_calls_drained` event. Verified fixed by running a job to `completed` against native Tesseract. Full backend suite (73 tests) still passes.
+- `app/workers/benchmark_worker.py` called `OCRBenchmarkRunner.wait_for_native_calls()` after `run()` to keep deployment-wide capacity reserved until native OCR threads actually exit, but `OCRBenchmarkRunner` never defined that method — every job failed with `AttributeError` immediately after rendering/recognition completed, before any job had ever reached `completed`. Added the method in `app/core/ocr/benchmark.py`; it awaits the existing `_native_calls_drained` event.
+- `OCRBenchmarkRunner.run()` measured every engine's `duration_ms` for a page from a timestamp taken *after* `asyncio.gather()` had already resolved all of that page's engine tasks together — so every engine in a page's batch recorded "time until the slowest sibling finished," not its own execution time. All engines running on the same page always reported identical durations. Fixed in `app/core/ocr/benchmark.py` by having each task record its own elapsed time the moment it individually completes; `backend/tests/test_ocr_benchmark.py::test_each_engines_duration_reflects_its_own_execution_time` regression-tests this with a fast and a slow fake adapter running concurrently.
+- Enabling EasyOCR/docTR (PyTorch-based) alongside PaddleOCR in the same worker process intermittently crashed EasyOCR/docTR initialization with `OSError: [WinError 127] ... shm.dll` — a genuine Windows-only native DLL load-order conflict (PaddlePaddle's runtime loading before PyTorch's breaks PyTorch's own DLL resolution for the rest of that process), made nondeterministic by adapters importing lazily in whatever order asyncio happens to schedule `recognize()` calls. Fixed by having `app/workers/benchmark_worker.py` eagerly import `torch` once at module load on Windows, before any adapter can import paddle first. `backend/tests/test_benchmark_worker.py` reproduces the real conflict as a negative control and verifies the fix, using the actual installed `torch`/`paddlepaddle` packages (skipped where inapplicable).
+
+All three fixes were verified by running real benchmark jobs to `completed`/`partial` against the live worker (not just unit tests), including three consecutive runs selecting all four engines together with zero failures. Full backend suite: 84 tests passing.
 
 Remaining work:
 - Run migration upgrade/downgrade and concurrent-claim/lease-recovery tests against real PostgreSQL; SQLite cannot verify PostgreSQL row-lock semantics. (Migrations themselves were applied successfully against a live PostgreSQL instance during this session; concurrent-claim/lease-recovery behavior under real contention is still unverified.)
 - Add hard process isolation for enforceable termination and memory ceilings for native OCR calls.
-- Configure docTR predictor/model loading; run native EasyOCR and PaddleOCR smoke tests with provisioned local models (Tesseract's smoke test now passes — see above).
 - Add peak RSS, CPU, cold-start, word count, CER/WER, reference-ground-truth scoring, queue metrics, job retention, and operational health/runbooks.
 - Confirm that deployed workers use shared document storage when running on separate hosts.
+- The Windows DLL-conflict fix (eager `torch` import) has not been exercised on Linux/macOS; it is a documented no-op there, but running all four engines together has only been verified on Windows.

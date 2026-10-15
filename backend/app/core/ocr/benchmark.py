@@ -130,12 +130,12 @@ class OCRBenchmarkRunner:
                     )
 
                 image = OCRImage(page.image_bytes, page.page_number)
-                page_task_started = {
-                    name: time.perf_counter() for name in active_names
-                }
+                page_task_elapsed: dict[str, float] = {}
                 page_tasks = {
                     name: asyncio.create_task(
-                        self._recognize_page(normalized_adapters[name], image)
+                        self._recognize_page_and_record_duration(
+                            name, normalized_adapters[name], image, page_task_elapsed
+                        )
                     )
                     for name in tuple(active_names)
                 }
@@ -143,9 +143,7 @@ class OCRBenchmarkRunner:
                     *page_tasks.values(), return_exceptions=True
                 )
                 for name, outcome in zip(page_tasks, outcomes, strict=True):
-                    engine_durations[name] += (
-                        time.perf_counter() - page_task_started[name]
-                    ) * 1000
+                    engine_durations[name] += page_task_elapsed[name] * 1000
                     if isinstance(outcome, BaseException):
                         result = engine_results[name]
                         result.status = (
@@ -214,6 +212,28 @@ class OCRBenchmarkRunner:
         sentinel = object()
         page = next(page_iterator, sentinel)
         return None if page is sentinel else page
+
+    async def _recognize_page_and_record_duration(
+        self,
+        name: str,
+        adapter: OCRAdapter,
+        image: OCRImage,
+        elapsed_store: dict[str, float],
+    ) -> OCRResult:
+        """Run one engine's recognition and record its own elapsed time in seconds.
+
+        Every engine's task for a page is awaited together via one
+        ``asyncio.gather()`` call. Timing each one from a shared reference point
+        measured *after* that gather resolves would record how long the
+        slowest sibling engine took, not this engine's own duration. Recording
+        elapsed time here, at the moment this task itself finishes (success,
+        failure, or cancellation), keeps per-engine timing independent.
+        """
+        started = time.perf_counter()
+        try:
+            return await self._recognize_page(adapter, image)
+        finally:
+            elapsed_store[name] = time.perf_counter() - started
 
     async def _recognize_page(
         self,

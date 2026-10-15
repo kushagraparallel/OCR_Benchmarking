@@ -35,9 +35,33 @@ The adapter converts PaddleOCR polygons to conservative pixel-aligned rectangles
 
 docTR is excluded from the default backend requirements because its model backend adds a substantial machine-learning runtime. Install it in a dedicated worker environment with `pip install -r requirements-ocr-doctr.txt` from the `backend/` directory. The optional file pins `python-doctr[torch]==0.10.0`; validate the resolved PyTorch build for the target operating system and hardware before deployment.
 
-`DocTRAdapter` takes a required `predictor_factory` instead of silently selecting pretrained models. The application should configure the factory with approved architectures and locally provisioned weights, for example by constructing a docTR OCR predictor with pretrained downloads disabled. The factory is called lazily once and the predictor is reused. This keeps model policy explicit and prevents request-time model downloads. CPU is the safe default until GPU compatibility and concurrency limits are verified.
+`DocTRAdapter` takes a required `predictor_factory` instead of silently selecting pretrained models. `create_configured_ocr_factory()` builds this factory from `OCR_DOCTR_DET_ARCH`, `OCR_DOCTR_RECO_ARCH`, and `OCR_DOCTR_CACHE_DIRECTORY` (see "Provisioning model weights" below) by setting the `DOCTR_CACHE_DIR` environment variable and calling `doctr.models.ocr_predictor(det_arch=..., reco_arch=..., pretrained=True)`. docTR's own `download_from_url` helper (`doctr/utils/data.py`) skips downloading any weight file already present under `DOCTR_CACHE_DIR`, so this never triggers a network call once the cache directory is provisioned. The factory is called lazily once and the predictor is reused. CPU is the safe default until GPU compatibility and concurrency limits are verified.
 
 docTR exports relative word geometry and page dimensions. The adapter scales relative coordinates into pixel bounds, preserves export reading order, and converts confidence to the shared 0–100 representation. This is a representation convention, not cross-engine confidence calibration. The adapter currently expects one submitted image and normalizes the first exported page.
+
+## Provisioning model weights for EasyOCR, PaddleOCR, and docTR
+
+These three engines must never download models at request time (see each section above), so their weights have to exist locally before the worker starts. `backend/scripts/provision_ocr_models.py` automates the one-time, online download using each engine's own library against a target directory, then prints the exact `backend/.env` lines to enable it:
+
+```powershell
+$env:PYTHONPATH = "."
+python -m scripts.provision_ocr_models --engines easyocr,paddleocr,doctr
+```
+
+Notes from provisioning and running all three for real on Windows:
+- EasyOCR's own download progress bar prints a Unicode block character that raises `UnicodeEncodeError` on a default Windows console codepage. Set `PYTHONIOENCODING=utf-8` and `PYTHONUTF8=1` before running the script (and before running the worker itself, since the same codepage applies to its logging).
+- Re-running the script is safe: EasyOCR, PaddleOCR, and docTR each skip downloading a weight file that already exists at the target path.
+- The script targets `backend/var/ocr-models/` by default, which is covered by `.gitignore` (`backend/var/`) — never commit downloaded model weights.
+
+## Known native-runtime issues found by running all four engines together
+
+Enabling EasyOCR, PaddleOCR, and docTR for real (not just against mocks) surfaced three real defects, now fixed:
+
+- **PaddleOCR silently detected nothing on normal-sized pages.** PaddleOCR's own default `det_limit_side_len` (960) downscales the longer side of every input image before detection. A page rendered by `PDFPageRenderer` at a typical DPI is routinely 1500–2400px+ on its long side, so the detector's input was being shrunk until ordinary body text became too small to detect — returning an empty, *not failed*, result (empty pages are valid output elsewhere, so this did not surface as an error). `PaddleOCRAdapter` now takes a `detection_image_side_limit` parameter (default `10_000`, matching the worker's configured `PDFPageRenderer(max_page_dimension_pixels=10_000)` ceiling) and passes it through as `det_limit_side_len`, so PaddleOCR never re-downscales an image this pipeline already decided was an acceptable size.
+- **Every engine in the same page reported an identical `duration_ms`.** `OCRBenchmarkRunner.run()` measured each engine's elapsed time from a shared timestamp read *after* `asyncio.gather()` had already resolved every task for that page — so every engine's recorded duration was really "time until the slowest sibling engine finished," not its own time. This silently defeated the tool's core purpose (comparing engine performance). Fixed by having each page task record its own elapsed time the moment it personally finishes (success, failure, or cancellation), independent of its siblings.
+- **EasyOCR and docTR intermittently failed to initialize with `OSError: [WinError 127] ... Error loading "...\torch\lib\shm.dll"` — but only on some worker process runs, not others.** This is a genuine Windows-only native DLL conflict: if PaddlePaddle's runtime loads into a process before PyTorch does, PyTorch's own `shm.dll` can no longer resolve one of its dependencies for the rest of that process's life. Since adapter imports are lazy and happen in whatever order `asyncio` schedules `recognize()` calls (non-deterministic between runs, since engine names iterate from a `set`), which engine's import ran first varied run to run. `app/workers/benchmark_worker.py` now eagerly imports `torch` once, unconditionally, at module import time on Windows (a no-op if torch isn't installed, or on non-Windows platforms) — guaranteeing the safe order regardless of which engine happens to run first. `backend/tests/test_benchmark_worker.py` reproduces the underlying conflict as a negative control (it fails on its own if a future torch/paddle release fixes this upstream) and verifies the workaround, using the real installed packages rather than mocks.
+
+All four engines were then run together against the real worker, three consecutive times, with zero failures and genuinely distinct per-engine durations.
 
 ## Tesseract system dependency
 
@@ -77,16 +101,15 @@ The renderer intentionally does not run OCR, persist files, or own benchmark lif
 GitHub Actions passed on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: Python compilation, offline Alembic SQL generation, and 27 backend tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38728100165.
 
 
-`backend/tests/test_ocr_tesseract.py` uses deterministic in-memory PNGs and mocks the Tesseract subprocess boundary. The unit tests do not require a native Tesseract installation and cover normalized text/words, invalid image bytes, pixel limits, timeout conversion, page numbering, and configuration validation. `backend/tests/test_ocr_easyocr.py` tests the optional adapter's lazy initialization, reader reuse, confidence/coordinate normalization, malformed output, and input validation without downloading EasyOCR models. `backend/tests/test_ocr_paddleocr.py` tests lazy initialization, required model paths, output normalization, empty results, non-finite coordinates, and configuration without importing PaddleOCR or downloading model weights. `backend/tests/test_ocr_doctr.py` tests predictor reuse, exported geometry normalization, empty results, malformed output, invalid images, and the recognition result contract using mocks.
+`backend/tests/test_ocr_tesseract.py` uses deterministic in-memory PNGs and mocks the Tesseract subprocess boundary. The unit tests do not require a native Tesseract installation and cover normalized text/words, invalid image bytes, pixel limits, timeout conversion, page numbering, and configuration validation. `backend/tests/test_ocr_easyocr.py` tests the optional adapter's lazy initialization, reader reuse, confidence/coordinate normalization, malformed output, and input validation without downloading EasyOCR models. `backend/tests/test_ocr_paddleocr.py` tests lazy initialization, required model paths, the configurable detection resize ceiling, output normalization, empty results, non-finite coordinates, and configuration without importing PaddleOCR or downloading model weights. `backend/tests/test_ocr_doctr.py` tests predictor reuse, exported geometry normalization, empty results, malformed output, invalid images, and the recognition result contract using mocks. `backend/tests/test_ocr_registry.py` tests `create_configured_ocr_factory()`'s validation and registration for all four engines, including docTR, without needing any optional package installed. `backend/tests/test_benchmark_worker.py` is the one exception to "no real dependencies": it uses the actual installed `torch`/`paddlepaddle` packages to reproduce and verify the fix for a real Windows-only DLL load-order conflict (skipped automatically when those packages, or a non-Windows platform, make it inapplicable).
 
 ## Remaining
 
-- Add native Tesseract smoke tests in a CI job or documented local validation environment.
-- Validate EasyOCR against a real sample corpus with provisioned model files and benchmark its RAM/latency footprint.
-- Validate PaddleOCR against real documents using pre-provisioned model files; record runtime version, accuracy, cold-start time, latency, and memory.
-- Validate docTR on real documents with a locally configured predictor and provisioned weights; record architecture, cold-start time, inference latency, and memory.
+- Add native Tesseract smoke tests in a CI job (local validation passed; see "Known native-runtime issues" above).
+- EasyOCR, PaddleOCR, and docTR have each been run against a real document end-to-end (see above); still outstanding: a larger sample corpus, systematic accuracy comparison, and RAM/cold-start/latency measurement under production-like load for all three.
 - Record adapter configuration and engine/model versions with each benchmark result.
 - Validate language-specific behavior and reading-order assumptions against a representative document corpus.
+- EasyOCR and PaddleOCR returned whole detected lines as a single "word" on a short single-line test page (Tesseract and docTR split per word on the same input); this reflects each engine's own default text-detection grouping, not a normalization bug, but has not been validated against multi-word, multi-line real documents.
 
 
 ## Engine factory and benchmark runner
@@ -119,8 +142,7 @@ From the backend directory, run `alembic upgrade head`, then run `python -m app.
 
 ### Configuration and limits
 
-- OCR_ENABLED_ENGINES defaults to `["tesseract"]`. EasyOCR requires OCR_EASYOCR_MODEL_DIRECTORY to point to pre-provisioned local weights. PaddleOCR requires detection, recognition and classification model directories. Implicit downloads remain disabled.
-- The docTR adapter exists, but its predictor factory/model loading is not yet configurable through the worker registry.
+- OCR_ENABLED_ENGINES defaults to `["tesseract"]`. EasyOCR requires OCR_EASYOCR_MODEL_DIRECTORY to point to pre-provisioned local weights. PaddleOCR requires detection, recognition and classification model directories. docTR requires OCR_DOCTR_CACHE_DIRECTORY (plus optional OCR_DOCTR_DET_ARCH/OCR_DOCTR_RECO_ARCH, defaulting to `db_resnet50`/`crnn_vgg16_bn`). Implicit downloads remain disabled for all three; see "Provisioning model weights" above.
 - OCR_MAX_CONCURRENT_ENGINES is per benchmark job. The global active-job ceiling is controlled by OCR_MAX_CONCURRENT_BENCHMARK_JOBS, independent of worker count. Total concurrent inference is approximately active-job limit multiplied by this per-job setting. Keep both settings at 1 until real model memory is measured.
 - OCR_ENGINE_TIMEOUT_SECONDS applies per engine per page. Native OCR running in a thread cannot be forcibly terminated; timed-out work retains its concurrency slot until the call exits.
 - OCR_MAX_RENDERED_IMAGE_BYTES limits cumulative rendered PNG bytes per run; it is not a direct resident-memory limit.

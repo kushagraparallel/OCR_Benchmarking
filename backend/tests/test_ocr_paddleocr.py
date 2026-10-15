@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from app.core.ocr.errors import OCRDependencyError, OCRExecutionError, OCRInputError
-from app.core.ocr.paddleocr import PaddleOCRAdapter
+from app.core.ocr.paddleocr import DEFAULT_DETECTION_IMAGE_SIDE_LIMIT, PaddleOCRAdapter
 from app.core.ocr.schemas import OCRImage
 
 
@@ -74,8 +74,26 @@ def test_get_engine_initializes_once_and_reuses_engine(tmp_path) -> None:
         det_model_dir=str((tmp_path / "detection").resolve()),
         rec_model_dir=str((tmp_path / "recognition").resolve()),
         cls_model_dir=str((tmp_path / "classification").resolve()),
+        det_limit_side_len=DEFAULT_DETECTION_IMAGE_SIDE_LIMIT,
         show_log=False,
     )
+
+
+def test_detection_image_side_limit_is_configurable_and_forwarded(tmp_path) -> None:
+    """A deployment must be able to override the detector's resize ceiling."""
+    adapter = create_adapter(tmp_path, detection_image_side_limit=4000)
+    fake_module = Mock()
+
+    with patch("app.core.ocr.paddleocr.importlib.import_module", return_value=fake_module):
+        adapter._get_engine()
+
+    assert fake_module.PaddleOCR.call_args.kwargs["det_limit_side_len"] == 4000
+
+
+def test_detection_image_side_limit_rejects_non_positive_values(tmp_path) -> None:
+    """A zero or negative resize ceiling would disable detection entirely."""
+    with pytest.raises(ValueError, match="detection_image_side_limit"):
+        create_adapter(tmp_path, detection_image_side_limit=0)
 
 
 def test_normalize_detections_handles_nested_page_result() -> None:
