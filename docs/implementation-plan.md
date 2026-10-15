@@ -10,7 +10,7 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories and Alembic migrations |
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
-| 5. OCR adapters and PDF rendering | In progress; adapter contract, Tesseract, and bounded PDF renderer implemented | Normalized result schema, incremental page rendering, resource limits, unit tests; native Tesseract smoke test pending |
+| 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR adapter implemented | Normalized result schema, bounded incremental rendering, lazy EasyOCR model initialization, mocked adapter tests; native engine validation pending |
 | 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
@@ -97,6 +97,10 @@ Implemented:
 - Define an abstract adapter contract that is independent of engine-specific packages.
 - Add domain exceptions for unavailable dependencies, invalid image inputs, and engine execution failures.
 - Implement Tesseract using `pytesseract.image_to_data`, preserving line breaks and normalizing confidence and coordinates.
+- Implement optional EasyOCR adapter with lazy imports/model initialization, reusable reader instance, explicit model-download policy, and a lock around model inference.
+- Normalize EasyOCR polygon bounds and convert its 0–1 confidence to the common 0–100 representation.
+- Add a separate optional dependency requirements file so base API installation does not install PyTorch unnecessarily.
+- Add EasyOCR unit tests that mock model initialization and do not download models.
 - Validate image bytes and bound decoded image pixel count; apply a subprocess timeout.
 - Pin `Pillow` and `pytesseract` dependencies and document the separate native Tesseract executable/language-data requirement.
 - Add mocked-engine tests that do not require Tesseract installed in CI.
@@ -110,7 +114,8 @@ Remaining validation:
 - Review OCR text ordering and confidence normalization against a representative corpus.
 
 Remaining:
-- Add EasyOCR, PaddleOCR and docTR adapters implementing the same contract.
+- Validate EasyOCR on real documents with model files pre-provisioned; measure cold-start time, inference latency, and memory.
+- Add PaddleOCR and docTR adapters implementing the same contract.
 - Add an adapter registry/factory after the initial adapters are validated.
 - Persist engine configuration/version metadata with benchmark results.
 - Add native-runtime CI coverage and multilingual fixtures.
