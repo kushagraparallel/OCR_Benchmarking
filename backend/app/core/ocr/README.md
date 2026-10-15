@@ -88,3 +88,15 @@ GitHub Actions passed on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: Pyth
 - Add a registry/factory and benchmark orchestration only after adapter contracts are stable.
 - Record adapter configuration and engine/model versions with each benchmark result.
 - Validate language-specific behavior and reading-order assumptions against a representative document corpus.
+
+
+## Engine factory and benchmark runner
+
+- `registry.py` exposes `OCREngineFactory`. The default factory always registers Tesseract and registers EasyOCR, PaddleOCR, and docTR only when their explicit configuration is supplied. This keeps optional native runtimes lazy and avoids implicit model downloads.
+- `benchmark.py` exposes `BenchmarkConfig`, `OCRBenchmarkRunner`, and normalized per-engine/overall result data classes.
+- Call `runner.run(pdf_bytes, selected_adapters)` from an async service. Validate selected names with `factory.create_many(names)` before running. The runner processes one rendered page at a time and shares that page's exact PNG bytes with each selected engine.
+- Synchronous PDF rendering and OCR are dispatched to worker threads. `max_concurrent_engines` bounds inference concurrency within this runner instance; start at 1 for memory-heavy model stacks and raise it only after profiling. This limit is per runner/process, not a deployment-wide quota.
+- Engine timeouts are recorded independently. Because cancelling a thread wait cannot stop arbitrary native OCR, timed-out work retains its concurrency slot until it actually returns. Configure a process-based worker if hard termination is required.
+- `max_total_rendered_image_bytes` is a per-run aggregate output budget; page count, pixel dimensions, and per-page pixels are independently bounded by `PDFPageRenderer`.
+
+This is currently an in-process orchestration service. Durable job submission/status persistence, API endpoint integration, process isolation, and evaluation metrics are subsequent work. Run the backend test suite from `backend/` with `pytest`; orchestration tests use fake adapters and do not download OCR models.
