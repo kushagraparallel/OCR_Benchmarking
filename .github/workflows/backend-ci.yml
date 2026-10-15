@@ -32,7 +32,14 @@ jobs:
       - name: Compile backend modules
         env:
           PYTHONPATH: backend
-        run: python -m compileall -q backend/app backend/tests
+        run: python -m compileall -q backend/app backend/tests backend/migrations
+
+      - name: Validate Alembic migration generation
+        env:
+          PYTHONPATH: .
+        run: |
+          cd backend
+          python -m alembic upgrade --sql head
 
       - name: Run backend tests
         env:
