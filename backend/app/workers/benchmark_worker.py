@@ -13,6 +13,7 @@ import signal
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 from typing import Any
 
 from sqlalchemy import select
@@ -25,6 +26,7 @@ from app.core.ocr.pdf_renderer import PDFPageRenderer
 from app.core.ocr.registry import OCREngineFactory, create_configured_ocr_factory
 from app.db.database import SessionFactory
 from app.db.repositories.benchmark_job_repository import BenchmarkJobRepository
+from app.db.repositories.benchmark_worker_slot_repository import BenchmarkWorkerSlotRepository
 from app.models.benchmark_job import BenchmarkJob
 from app.models.document import DocumentRecord
 
@@ -101,13 +103,16 @@ def _renew_lease(job_id: str, lease_seconds: int) -> bool:
         return BenchmarkJobRepository(session).renew_lease(job_id, lease_seconds)
 
 
-async def _lease_heartbeat(job_id: str, lease_seconds: int) -> None:
+async def _lease_heartbeat(job_id: str, slot_id: int, worker_id: str, lease_seconds: int) -> None:
     """Keep long-running jobs from being reclaimed by another worker."""
     interval = max(5.0, lease_seconds / 3)
     while True:
         await asyncio.sleep(interval)
-        renewed = await asyncio.to_thread(_renew_lease, job_id, lease_seconds)
-        if not renewed:
+        job_renewed = await asyncio.to_thread(_renew_lease, job_id, lease_seconds)
+        slot_renewed = await asyncio.to_thread(
+            _renew_worker_slot, slot_id, worker_id, lease_seconds
+        )
+        if not job_renewed or not slot_renewed:
             return
 
 
@@ -134,7 +139,7 @@ def _serialize_result(result: BenchmarkResult) -> dict[str, Any]:
     return asdict(result)
 
 
-async def _execute_job(job_id: str, concurrency_semaphore: asyncio.Semaphore) -> None:
+async def _execute_job(job_id: str, concurrency_semaphore: asyncio.Semaphore, slot_id: int, worker_id: str) -> None:
     """Run one claimed job, isolate errors, and persist normalized engine output."""
     settings = get_settings()
     inputs = await asyncio.to_thread(_load_job_inputs, job_id)
@@ -162,7 +167,7 @@ async def _execute_job(job_id: str, concurrency_semaphore: asyncio.Semaphore) ->
             concurrency_semaphore=concurrency_semaphore,
         )
         heartbeat = asyncio.create_task(
-            _lease_heartbeat(job_id, settings.ocr_worker_lease_seconds)
+            _lease_heartbeat(job_id, slot_id, worker_id, settings.ocr_worker_lease_seconds)
         )
         try:
             result = await runner.run(
@@ -198,6 +203,39 @@ async def _execute_job(job_id: str, concurrency_semaphore: asyncio.Semaphore) ->
         )
 
 
+
+def _ensure_worker_capacity() -> None:
+    """Provision the configured number of shared execution slots."""
+    settings = get_settings()
+    with SessionFactory() as session:
+        BenchmarkWorkerSlotRepository(session).ensure_capacity(
+            settings.ocr_max_concurrent_benchmark_jobs
+        )
+
+
+def _acquire_worker_slot(worker_id: str) -> int | None:
+    """Reserve one globally shared benchmark slot."""
+    settings = get_settings()
+    with SessionFactory() as session:
+        return BenchmarkWorkerSlotRepository(session).acquire(
+            worker_id,
+            settings.ocr_max_concurrent_benchmark_jobs,
+            settings.ocr_worker_lease_seconds,
+        )
+
+
+def _renew_worker_slot(slot_id: int, worker_id: str, lease_seconds: int) -> bool:
+    """Renew the worker's global concurrency slot."""
+    with SessionFactory() as session:
+        return BenchmarkWorkerSlotRepository(session).renew(slot_id, worker_id, lease_seconds)
+
+
+def _release_worker_slot(slot_id: int, worker_id: str) -> None:
+    """Release the worker's global concurrency slot."""
+    with SessionFactory() as session:
+        BenchmarkWorkerSlotRepository(session).release(slot_id, worker_id)
+
+
 def _claim_next_job() -> tuple[str, int] | None:
     """Claim one job in a short database transaction."""
     settings = get_settings()
@@ -209,11 +247,18 @@ def _claim_next_job() -> tuple[str, int] | None:
 
 
 async def _worker_loop() -> None:
-    """Poll continuously on one event loop so worker-wide inference limits persist."""
+    """Poll jobs while enforcing shared capacity across all worker processes."""
     settings = get_settings()
     concurrency_semaphore = asyncio.Semaphore(settings.ocr_max_concurrent_engines)
+    worker_id = str(uuid4())
+    await asyncio.to_thread(_ensure_worker_capacity)
 
     while not _STOP_REQUESTED:
+        slot_id = await asyncio.to_thread(_acquire_worker_slot, worker_id)
+        if slot_id is None:
+            await asyncio.sleep(settings.ocr_worker_poll_seconds)
+            continue
+
         try:
             claimed = await asyncio.to_thread(_claim_next_job)
             if claimed is None:
@@ -230,12 +275,14 @@ async def _worker_loop() -> None:
                 )
                 continue
 
-            await _execute_job(job_id, concurrency_semaphore)
+            await _execute_job(job_id, concurrency_semaphore, slot_id, worker_id)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Benchmark worker loop failed")
             await asyncio.sleep(settings.ocr_worker_poll_seconds)
+        finally:
+            await asyncio.to_thread(_release_worker_slot, slot_id, worker_id)
 
 
 def run_worker() -> None:
