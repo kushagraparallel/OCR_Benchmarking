@@ -10,7 +10,6 @@ predictable. Multiple workers coordinate through leases stored in PostgreSQL.
 import asyncio
 import logging
 import signal
-import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.documents.storage import LocalDocumentStorage
+from app.core.ocr.base import OCRAdapter
 from app.core.ocr.benchmark import BenchmarkConfig, OCRBenchmarkRunner
 from app.core.ocr.pdf_renderer import PDFPageRenderer
 from app.core.ocr.registry import create_configured_ocr_factory
@@ -113,7 +113,7 @@ async def _lease_heartbeat(job_id: str, lease_seconds: int) -> None:
 
 
 
-def _get_worker_adapters(engine_names: list[str]):
+def _get_worker_adapters(engine_names: list[str]) -> dict[str, OCRAdapter]:
     """Reuse initialized adapter instances for the lifetime of this worker process."""
     global _WORKER_FACTORY
     if _WORKER_FACTORY is None:
@@ -135,7 +135,7 @@ def _serialize_result(result: object) -> dict[str, Any]:
     return asdict(result)
 
 
-async def _execute_job(job_id: str) -> None:
+async def _execute_job(job_id: str, concurrency_semaphore: asyncio.Semaphore) -> None:
     """Run one claimed job, isolate errors, and persist normalized engine output."""
     settings = get_settings()
     inputs = await asyncio.to_thread(_load_job_inputs, job_id)
@@ -160,6 +160,7 @@ async def _execute_job(job_id: str) -> None:
                 max_concurrent_engines=settings.ocr_max_concurrent_engines,
                 max_total_rendered_image_bytes=settings.ocr_max_rendered_image_bytes,
             ),
+            concurrency_semaphore=concurrency_semaphore,
         )
         heartbeat = asyncio.create_task(
             _lease_heartbeat(job_id, settings.ocr_worker_lease_seconds)
@@ -198,34 +199,51 @@ async def _execute_job(job_id: str) -> None:
         )
 
 
-def run_worker() -> None:
-    """Poll and claim jobs until SIGINT or SIGTERM requests shutdown."""
+def _claim_next_job() -> tuple[str, int] | None:
+    """Claim one job in a short database transaction."""
     settings = get_settings()
-    signal.signal(signal.SIGINT, _request_stop)
-    signal.signal(signal.SIGTERM, _request_stop)
+    with SessionFactory() as session:
+        job = BenchmarkJobRepository(session).claim_next(settings.ocr_worker_lease_seconds)
+        if job is None:
+            return None
+        return job.id, job.attempt_count
+
+
+async def _worker_loop() -> None:
+    """Poll continuously on one event loop so worker-wide inference limits persist."""
+    settings = get_settings()
+    concurrency_semaphore = asyncio.Semaphore(settings.ocr_max_concurrent_engines)
 
     while not _STOP_REQUESTED:
         try:
-            with SessionFactory() as session:
-                job = BenchmarkJobRepository(session).claim_next(
-                    settings.ocr_worker_lease_seconds
-                )
-                job_id = job.id if job is not None else None
-                attempt_count = job.attempt_count if job is not None else 0
-            if job_id is None:
-                time.sleep(settings.ocr_worker_poll_seconds)
+            claimed = await asyncio.to_thread(_claim_next_job)
+            if claimed is None:
+                await asyncio.sleep(settings.ocr_worker_poll_seconds)
                 continue
+
+            job_id, attempt_count = claimed
             if attempt_count > settings.ocr_worker_max_attempts:
-                _finish_job(
+                await asyncio.to_thread(
+                    _finish_job,
                     job_id,
                     "failed",
                     error="Benchmark exceeded the maximum worker recovery attempts.",
                 )
                 continue
-            asyncio.run(_execute_job(job_id))
+
+            await _execute_job(job_id, concurrency_semaphore)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("Benchmark worker loop failed")
-            time.sleep(settings.ocr_worker_poll_seconds)
+            await asyncio.sleep(settings.ocr_worker_poll_seconds)
+
+
+def run_worker() -> None:
+    """Poll and claim jobs until SIGINT or SIGTERM requests shutdown."""
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
+    asyncio.run(_worker_loop())
 
 
 if __name__ == "__main__":
