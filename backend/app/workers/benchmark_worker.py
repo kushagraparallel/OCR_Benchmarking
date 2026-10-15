@@ -126,7 +126,7 @@ async def _execute_job(job_id: str) -> None:
         runner = OCRBenchmarkRunner(
             PDFPageRenderer(
                 max_pages=settings.max_pdf_pages,
-                max_page_dimension_pixels=int(settings.max_pdf_page_dimension_points * 200 / 72),
+                max_page_dimension_pixels=10_000,
             ),
             BenchmarkConfig(
                 engine_timeout_seconds=settings.ocr_engine_timeout_seconds,
@@ -160,7 +160,7 @@ async def _execute_job(job_id: str) -> None:
         )
     except asyncio.CancelledError:
         await asyncio.to_thread(_finish_job, job_id, "cancelled")
-        raise
+        return
     except Exception as exc:
         logger.exception("Benchmark job %s failed", job_id)
         await asyncio.to_thread(
