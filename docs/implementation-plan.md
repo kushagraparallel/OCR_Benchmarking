@@ -186,7 +186,7 @@ Implemented on the current branch:
 Operations:
 - From backend/, apply migrations with `alembic upgrade head`, then run `python -m app.workers.benchmark_worker` in one or more separate worker processes.
 - All workers must share the same PostgreSQL database and, with current local document storage, the same DOCUMENT_STORAGE_ROOT.
-- Worker count controls concurrent jobs across processes. OCR_MAX_CONCURRENT_ENGINES controls inference concurrency inside each job, so the approximate upper bound is worker count multiplied by that setting. Keep both conservative until memory profiling is complete.
+- `OCR_MAX_CONCURRENT_BENCHMARK_JOBS` enforces a shared active-job ceiling across all worker processes. Worker count controls available processing capacity but cannot exceed the slot limit. `OCR_MAX_CONCURRENT_ENGINES` controls inference concurrency inside each job, so the approximate inference ceiling is configured active jobs multiplied by per-job inference concurrency.
 
 Remaining work:
 - Run migration upgrade/downgrade and concurrent-claim/lease-recovery tests against real PostgreSQL; SQLite cannot verify PostgreSQL row-lock semantics.
