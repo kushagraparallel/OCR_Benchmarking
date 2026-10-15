@@ -55,11 +55,11 @@ class BenchmarkResult:
 
 
 class OCRBenchmarkRunner:
-    """Render each PDF page once and compare selected engines under bounded concurrency.
+    """Render each page once and compare engines with bounded worker concurrency.
 
-    Rendering and OCR are moved to worker threads so synchronous PyMuPDF and OCR
-    calls do not block the FastAPI event loop. Page images are released after all
-    selected engines have handled that page, avoiding a document-sized image cache.
+    Rendering and synchronous OCR execute in worker threads, never on the FastAPI
+    event loop. Pages are processed incrementally and their image buffers are
+    released before the next page is rendered.
     """
 
     def __init__(
@@ -69,16 +69,14 @@ class OCRBenchmarkRunner:
     ) -> None:
         self._renderer = renderer
         self._config = config or BenchmarkConfig()
-        self._engine_semaphore = asyncio.Semaphore(
-            self._config.max_concurrent_engines
-        )
+        self._engine_semaphore = asyncio.Semaphore(self._config.max_concurrent_engines)
 
     async def run(
         self,
         pdf_bytes: bytes,
         adapters: dict[str, OCRAdapter],
     ) -> BenchmarkResult:
-        """Execute engines independently and return successful outputs even on failures."""
+        """Execute engines independently and preserve successful partial results."""
         if not adapters:
             raise ValueError("At least one OCR engine must be selected.")
         normalized_adapters = self._validate_adapters(adapters)
@@ -90,31 +88,37 @@ class OCRBenchmarkRunner:
         active_names = set(normalized_adapters)
         page_count = 0
         rendered_bytes = 0
+        page_iterator = None
 
         try:
-            pages = await asyncio.to_thread(
-                self._render_all_pages, pdf_bytes
-            )
-            # Keep a bounded image budget and render only once per source page.
-            for page in pages:
+            page_iterator = await asyncio.to_thread(iter, self._renderer.render_pages(pdf_bytes))
+            while True:
+                page = await asyncio.to_thread(self._next_page, page_iterator)
+                if page is None:
+                    break
                 page_count += 1
                 rendered_bytes += len(page.image_bytes)
                 if rendered_bytes > self._config.max_total_rendered_image_bytes:
                     raise OCRInputError(
                         "Rendered PDF images exceed the configured total image-byte limit."
                     )
+
                 image = OCRImage(page.image_bytes, page.page_number)
-                tasks = {
+                page_tasks = {
                     name: asyncio.create_task(
                         self._recognize_page(normalized_adapters[name], image)
                     )
                     for name in tuple(active_names)
                 }
-                outcomes = await asyncio.gather(*tasks.items(), return_exceptions=True)
-                for name, outcome in outcomes:
+                outcomes = await asyncio.gather(
+                    *page_tasks.values(), return_exceptions=True
+                )
+                for name, outcome in zip(page_tasks, outcomes, strict=True):
                     if isinstance(outcome, BaseException):
                         result = engine_results[name]
-                        result.status = "timed_out" if isinstance(outcome, TimeoutError) else "failed"
+                        result.status = (
+                            "timed_out" if isinstance(outcome, TimeoutError) else "failed"
+                        )
                         result.error = self._safe_error_message(outcome)
                         active_names.discard(name)
                         logger.warning(
@@ -130,33 +134,33 @@ class OCRBenchmarkRunner:
             raise
         except Exception as exc:
             logger.exception("OCR benchmark could not complete PDF rendering")
-            if not page_count:
+            if page_count == 0:
                 raise
             for name in active_names:
                 engine_results[name].status = "failed"
                 engine_results[name].error = self._safe_error_message(exc)
             active_names.clear()
-        finally:
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            for result in engine_results.values():
-                result.duration_ms = round(elapsed_ms, 3)
 
         for result in engine_results.values():
+            result.duration_ms = round((time.perf_counter() - started) * 1000, 3)
             if result.status == "success" and not result.results:
                 result.status = "failed"
                 result.error = "The engine did not return any page results."
             elif result.status == "success" and page_count and len(result.results) < page_count:
                 result.status = "partial"
 
-        successful = sum(bool(result.results) for result in engine_results.values())
-        failed = sum(result.status in ("failed", "timed_out") for result in engine_results.values())
-        overall_status: Literal["success", "partial", "failed"]
-        if failed == 0 and successful == len(engine_results):
-            overall_status = "success"
-        elif successful:
+        succeeded = sum(bool(result.results) for result in engine_results.values())
+        failed = sum(
+            result.status in ("failed", "timed_out")
+            for result in engine_results.values()
+        )
+        if failed == 0 and succeeded == len(engine_results):
+            overall_status: Literal["success", "partial", "failed"] = "success"
+        elif succeeded:
             overall_status = "partial"
         else:
             overall_status = "failed"
+
         return BenchmarkResult(
             status=overall_status,
             duration_ms=round((time.perf_counter() - started) * 1000, 3),
@@ -164,30 +168,45 @@ class OCRBenchmarkRunner:
             engines=engine_results,
         )
 
-    def _render_all_pages(self, pdf_bytes: bytes):
-        """Render to a bounded list so total raster memory is checked before OCR."""
-        pages = list(self._renderer.render_pages(pdf_bytes))
-        if not pages:
-            raise OCRInputError("The PDF does not contain any renderable pages.")
-        return pages
+    @staticmethod
+    def _next_page(page_iterator):
+        """Advance a lazy renderer without leaking StopIteration through asyncio."""
+        sentinel = object()
+        page = next(page_iterator, sentinel)
+        return None if page is sentinel else page
 
     async def _recognize_page(
         self,
         adapter: OCRAdapter,
         image: OCRImage,
     ) -> OCRResult:
-        """Run synchronous engine work off-loop with per-engine timeout and concurrency."""
-        async with self._engine_semaphore:
-            return await asyncio.wait_for(
-                asyncio.to_thread(adapter.recognize, image),
+        """Run synchronous inference off-loop and preserve slots after timeout/cancel."""
+        await self._engine_semaphore.acquire()
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, adapter.recognize, image)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(future),
                 timeout=self._config.engine_timeout_seconds,
             )
+        except (TimeoutError, asyncio.CancelledError):
+            # Cancelling an await does not stop native OCR already running in a thread.
+            # Keep the slot occupied until that thread has really completed.
+            future.add_done_callback(
+                lambda _: loop.call_soon_threadsafe(self._engine_semaphore.release)
+            )
+            raise
+        except Exception:
+            self._engine_semaphore.release()
+            raise
+        self._engine_semaphore.release()
+        return result
 
     @staticmethod
     def _validate_adapters(
         adapters: dict[str, OCRAdapter],
     ) -> dict[str, OCRAdapter]:
-        """Reject ambiguous names and mismatched adapters before doing expensive work."""
+        """Reject ambiguous names and mismatched adapters before rendering."""
         normalized: dict[str, OCRAdapter] = {}
         for name, adapter in adapters.items():
             key = name.strip().casefold()
@@ -206,7 +225,7 @@ class OCRBenchmarkRunner:
 
     @staticmethod
     def _safe_error_message(error: BaseException) -> str:
-        """Return a bounded error description without exposing stack traces to clients."""
+        """Return a bounded error description without exposing stack traces."""
         if isinstance(error, TimeoutError):
             return "OCR engine exceeded the configured timeout."
         if isinstance(error, OCRAdapterError):
