@@ -1,21 +1,14 @@
 """HTTP endpoints for account authentication and current-user operations."""
 
-import logging
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from app.config import get_settings
 from app.core.auth.dependencies import CurrentUser, DatabaseSession
 from app.core.auth.errors import EmailAlreadyRegisteredError, InvalidCredentialsError, InvalidRefreshTokenError
-from app.core.auth.security import decode_access_token
 from app.core.auth.service import AuthenticationService
-from app.db.repositories.auth_repository import AuthRepository
 from app.models import User
 from app.schemas.auth import LoginRequest, MessageResponse, RegistrationRequest, TokenResponse, UserResponse
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
@@ -47,11 +40,7 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 def _token_response(user: User, access_token: str, lifetime: int) -> TokenResponse:
     """Build the public token response without exposing session or refresh secrets."""
-    return TokenResponse(
-        access_token=access_token,
-        expires_in=lifetime,
-        user=UserResponse.model_validate(user),
-    )
+    return TokenResponse(access_token=access_token, expires_in=lifetime, user=UserResponse.model_validate(user))
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
