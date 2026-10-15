@@ -11,7 +11,7 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
 | 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR/PaddleOCR/docTR adapters implemented | Normalized result schema, bounded incremental rendering, lazy model initialization for three optional engines, normalized detection output, mocked adapter tests; native engine validation pending |
-| 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
+| 6. Benchmark execution and evaluation | In progress | Engine factory and bounded in-process runner implemented with normalized per-engine outcomes and mocked orchestration tests; persistent job queue, database lifecycle, metrics and CER/WER remain |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
 
@@ -152,3 +152,22 @@ For each implementation phase:
 6. Report unexecuted checks and external prerequisites explicitly.
 
 Dependency installation, database connectivity, migration execution, OCR model downloads and source compilation are distinct checks and must not be conflated.
+
+
+## Phase 6 — Benchmark orchestration (in progress)
+
+Implemented in this step:
+- Add a common OCR engine factory with deterministic engine discovery, duplicate/unknown-name validation, and lazy optional-engine registration.
+- Add validated benchmark configuration for engine timeout, concurrent inferences, and aggregate rendered-image byte budget.
+- Render PDF pages incrementally once and pass the same immutable encoded page bytes to each selected engine.
+- Execute synchronous rendering and OCR in worker threads so they do not block the FastAPI event loop.
+- Bound OCR inference concurrency and retain a concurrency slot until a timed-out/cancelled native call actually finishes.
+- Record per-engine status, duration, bounded error details, and normalized per-page OCR results; isolate engine exceptions.
+- Add mocked tests for registry validation, partial failure, shared page bytes, timeout isolation, cancellation propagation, concurrency, oversized PDF page count, and image-byte budgets.
+
+Important limitations:
+- The runner is an in-process service, not yet a durable background job queue. A client disconnect or process restart can interrupt a benchmark.
+- Python cannot forcibly terminate arbitrary native OCR work already running in a thread. Timeouts report the result and keep the concurrency slot reserved until the call exits; use process isolation for hard-kill guarantees in a later worker design.
+- The aggregate rendered-image budget limits total bytes rendered over a run, not just peak resident memory. It is intentionally conservative and configurable.
+- Optional engine configuration must supply vetted local model paths/factories; no request-time model downloads are enabled.
+- Native OCR engine smoke tests and real-model memory profiling remain pending.
