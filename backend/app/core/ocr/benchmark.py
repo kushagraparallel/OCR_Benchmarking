@@ -93,6 +93,7 @@ class OCRBenchmarkRunner:
         active_names = set(normalized_adapters)
         page_count = 0
         rendered_bytes = 0
+        engine_durations = {name: 0.0 for name in normalized_adapters}
         page_iterator = None
 
         try:
@@ -111,6 +112,9 @@ class OCRBenchmarkRunner:
                     )
 
                 image = OCRImage(page.image_bytes, page.page_number)
+                page_task_started = {
+                    name: time.perf_counter() for name in active_names
+                }
                 page_tasks = {
                     name: asyncio.create_task(
                         self._recognize_page(normalized_adapters[name], image)
@@ -121,6 +125,9 @@ class OCRBenchmarkRunner:
                     *page_tasks.values(), return_exceptions=True
                 )
                 for name, outcome in zip(page_tasks, outcomes, strict=True):
+                    engine_durations[name] += (
+                        time.perf_counter() - page_task_started[name]
+                    ) * 1000
                     if isinstance(outcome, BaseException):
                         result = engine_results[name]
                         result.status = (
@@ -150,8 +157,8 @@ class OCRBenchmarkRunner:
                 engine_results[name].error = self._safe_error_message(exc)
             active_names.clear()
 
-        for result in engine_results.values():
-            result.duration_ms = round((time.perf_counter() - started) * 1000, 3)
+        for name, result in engine_results.items():
+            result.duration_ms = round(engine_durations[name], 3)
             if result.status == "success" and not result.results:
                 result.status = "failed"
                 result.error = "The engine did not return any page results."
