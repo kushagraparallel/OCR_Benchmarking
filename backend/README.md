@@ -46,7 +46,7 @@ Protected endpoints require an \`Authorization: Bearer <access_token>\` header. 
 
 ## OCR adapter foundation
 
-The first OCR adapter is available under `app/core/ocr/`. It defines a shared contract and normalized word-level results, and implements Tesseract recognition. Python packages are installed from the pinned requirements file, but the native Tesseract executable and language data must be installed separately. See [OCR adapter documentation](app/core/ocr/README.md) for installation and validation details.
+The OCR layer under `app/core/ocr/` defines a shared adapter contract, implements Tesseract, and includes bounded incremental PDF-to-PNG page rendering. The renderer enforces configurable DPI, page-count, dimension, and pixel limits. Python packages are installed from the pinned requirements file, but the native Tesseract executable and language data must be installed separately. See [OCR adapter documentation](app/core/ocr/README.md) for setup and validation details.
 
 ## PDF ingestion
 

@@ -10,7 +10,7 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories and Alembic migrations |
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
-| 5. 5. OCR adapters | In progress; adapter contract and Tesseract implemented; CI verified | Shared result schema, Tesseract adapter, 6 adapter tests; native runtime smoke test pending |
+| 5. OCR adapters and PDF rendering | In progress; adapter contract, Tesseract, and bounded PDF renderer implemented | Normalized result schema, incremental page rendering, resource limits, unit tests; native Tesseract smoke test pending |
 | 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
@@ -103,12 +103,13 @@ Implemented:
 
 Verified on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: compilation, offline Alembic SQL generation, and all 27 tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38728100165
 
+Verified on commit `a56731e5b17598ba49a514ab54b3156de4fd1c01`: Python compilation, offline Alembic SQL generation, and the backend test suite passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38732468400
+
 Remaining validation:
 - Run a native Tesseract smoke test in an environment with the executable and English trained data installed.
 - Review OCR text ordering and confidence normalization against a representative corpus.
 
 Remaining:
-- Add the bounded PDF page renderer with configurable DPI.
 - Add EasyOCR, PaddleOCR and docTR adapters implementing the same contract.
 - Add an adapter registry/factory after the initial adapters are validated.
 - Persist engine configuration/version metadata with benchmark results.
