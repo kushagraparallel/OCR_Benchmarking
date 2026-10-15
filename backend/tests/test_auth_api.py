@@ -125,3 +125,48 @@ def test_login_rejects_incorrect_password(client: TestClient) -> None:
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid email or password."
+
+
+def test_user_cannot_revoke_another_users_session(client: TestClient) -> None:
+    """A user must not be able to revoke a session owned by another account."""
+    register_user(client, "first@example.com")
+    first_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "first@example.com", "password": "Strong-password-123"},
+    )
+    first_headers = {"Authorization": f"Bearer {first_login.json()['access_token']}"}
+    first_sessions = client.get("/api/v1/sessions", headers=first_headers).json()["items"]
+    first_session_id = first_sessions[0]["id"]
+
+    register_user(client, "second@example.com")
+    second_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "second@example.com", "password": "Strong-password-123"},
+    )
+    second_headers = {"Authorization": f"Bearer {second_login.json()['access_token']}"}
+    revoke_response = client.delete(f"/api/v1/sessions/{first_session_id}", headers=second_headers)
+
+    assert revoke_response.status_code == 404
+    assert client.get("/api/v1/auth/me", headers=first_headers).status_code == 200
+
+
+def test_logout_all_revokes_every_access_session(client: TestClient) -> None:
+    """Logout-all should invalidate access tokens from all sessions for the account."""
+    register_user(client)
+    first_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "tester@example.com", "password": "Strong-password-123"},
+    )
+    second_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "tester@example.com", "password": "Strong-password-123"},
+    )
+    first_headers = {"Authorization": f"Bearer {first_login.json()['access_token']}"}
+    second_headers = {"Authorization": f"Bearer {second_login.json()['access_token']}"}
+
+    logout_response = client.post("/api/v1/auth/logout-all", headers=first_headers)
+
+    assert logout_response.status_code == 200
+    assert client.get("/api/v1/auth/me", headers=first_headers).status_code == 401
+    assert client.get("/api/v1/auth/me", headers=second_headers).status_code == 401
+
