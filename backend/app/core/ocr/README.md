@@ -11,6 +11,7 @@ The OCR domain provides one engine-independent contract so benchmark orchestrati
 - `errors.py`: stable domain errors for missing dependencies, invalid input, and engine failures.
 - `tesseract.py`: Tesseract adapter, using `pytesseract.image_to_data` to return text and word-level geometry.
 - `easyocr.py`: optional EasyOCR adapter with lazy dependency/model initialization and shared normalized results.
+- `paddleocr.py`: optional PaddleOCR 2.x adapter with explicit local model paths, lazy initialization, and normalized detection output.
 - `pdf_renderer.py`: bounded, incremental PDF page renderer using PyMuPDF; yields one PNG page at a time.
 
 ## Optional EasyOCR setup
@@ -20,6 +21,14 @@ EasyOCR is intentionally excluded from the default backend dependency set becaus
 `EasyOCRAdapter` is lazy: constructing it does not import EasyOCR or load models. The first recognition call initializes one shared reader, then reuses it for later pages. `download_enabled` defaults to `False`, so required model files must be provisioned in advance; this avoids model downloads triggered by a request. CPU mode is the default. Enable GPU only after validating the installed PyTorch/CUDA combination and memory budget. A lock protects model initialization and inference because reader thread-safety should not be assumed.
 
 EasyOCR's detection confidence (0–1) is converted to the common 0–100 scale. Polygon coordinates are normalized to conservative pixel-aligned rectangular bounds. This makes confidence fields comparable in representation, but not necessarily statistically comparable across engines; benchmark reports should identify the engine and avoid treating confidence as ground-truth accuracy.
+
+## Optional PaddleOCR setup
+
+PaddleOCR is excluded from the base requirements because it adds a large OCR/runtime dependency stack. Install it in a dedicated worker environment using `pip install -r requirements-ocr-paddleocr.txt` from the `backend/` directory. This optional file pins PaddleOCR 2.9.1 and PaddlePaddle 2.6.2 because the adapter targets the PaddleOCR 2.x API; use a compatible Python/platform combination and validate the dependency set before deployment.
+
+`PaddleOCRAdapter` requires existing local detection and recognition model directories, plus a classification model directory when angle classification is enabled. It does not allow implicit model-directory defaults, which avoids a request silently downloading model weights. Provision model files as part of environment setup and verify that their format matches the pinned runtime. Engine initialization is lazy and reused. Initialization and inference are protected by a lock rather than assuming the engine is thread-safe. CPU is the default; GPU mode requires a matching PaddlePaddle/CUDA build and an explicit memory/concurrency budget.
+
+The adapter converts PaddleOCR polygons to conservative pixel-aligned rectangles and maps confidence from 0–1 to the shared 0–100 representation. Empty-page output is valid. Malformed results and non-finite coordinates raise a domain execution error. Confidence scales are normalized in representation only and must not be treated as comparable accuracy estimates across engines.
 
 ## Tesseract system dependency
 
@@ -59,13 +68,14 @@ The renderer intentionally does not run OCR, persist files, or own benchmark lif
 GitHub Actions passed on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: Python compilation, offline Alembic SQL generation, and 27 backend tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38728100165.
 
 
-`backend/tests/test_ocr_tesseract.py` uses deterministic in-memory PNGs and mocks the Tesseract subprocess boundary. The unit tests do not require a native Tesseract installation and cover normalized text/words, invalid image bytes, pixel limits, timeout conversion, page numbering, and configuration validation. `backend/tests/test_ocr_easyocr.py` tests the optional adapter's lazy initialization, reader reuse, confidence/coordinate normalization, malformed output, and input validation without downloading EasyOCR models.
+`backend/tests/test_ocr_tesseract.py` uses deterministic in-memory PNGs and mocks the Tesseract subprocess boundary. The unit tests do not require a native Tesseract installation and cover normalized text/words, invalid image bytes, pixel limits, timeout conversion, page numbering, and configuration validation. `backend/tests/test_ocr_easyocr.py` tests the optional adapter's lazy initialization, reader reuse, confidence/coordinate normalization, malformed output, and input validation without downloading EasyOCR models. `backend/tests/test_ocr_paddleocr.py` tests lazy initialization, required model paths, output normalization, empty results, non-finite coordinates, and configuration without importing PaddleOCR or downloading model weights.
 
 ## Remaining
 
 - Add native Tesseract smoke tests in a CI job or documented local validation environment.
 - Validate EasyOCR against a real sample corpus with provisioned model files and benchmark its RAM/latency footprint.
-- Add PaddleOCR and docTR adapters using the same contract.
+- Validate PaddleOCR against real documents using pre-provisioned model files; record runtime version, accuracy, cold-start time, latency, and memory.
+- Add docTR adapter using the same contract.
 - Add a registry/factory and benchmark orchestration only after adapter contracts are stable.
 - Record adapter configuration and engine/model versions with each benchmark result.
 - Validate language-specific behavior and reading-order assumptions against a representative document corpus.
