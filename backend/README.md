@@ -56,11 +56,16 @@ $env:PYTHONPATH = "."
 alembic upgrade head
 ```
 
-Review migration scripts before applying them. To inspect history, run `alembic history`. A database migration has not been verified against PostgreSQL until it is actually run against a PostgreSQL instance.
+Review migration scripts before applying them. To inspect history, run `alembic history`. CI validates offline SQL generation, but PostgreSQL migration upgrade/downgrade has not yet been verified against a live PostgreSQL instance.
 
 ## Validation
 
-From the repository root:
+GitHub Actions passed on commit `9ef1f505077557b12c50d4cb1123b1cdc8506f97`:
+- Python compilation of application, tests and migrations.
+- Offline Alembic SQL generation.
+- 12 backend tests passed.
+
+Run the same checks locally from the repository root:
 
 ```powershell
 $env:PYTHONPATH = "backend"
@@ -68,7 +73,7 @@ python -m compileall -q backend/app backend/tests backend/migrations
 python -m pytest backend/tests -q
 ```
 
-Tests use an isolated in-memory SQLite database and do not require PostgreSQL. They do not establish PostgreSQL connectivity, migration compatibility, or concurrent refresh-token behavior on PostgreSQL.
+The tests use an isolated in-memory SQLite database. They do not establish PostgreSQL connectivity, migration compatibility, or concurrent refresh-token behavior on PostgreSQL.
 
 ## Security boundaries and known gaps
 
