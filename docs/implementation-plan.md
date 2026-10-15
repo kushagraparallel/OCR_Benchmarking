@@ -11,7 +11,7 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
 | 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR/PaddleOCR/docTR adapters implemented | Normalized result schema, bounded incremental rendering, lazy model initialization for three optional engines, normalized detection output, mocked adapter tests; native engine validation pending |
-| 6. Benchmark execution and evaluation | In progress | Engine factory and bounded in-process runner implemented with normalized per-engine outcomes and mocked orchestration tests; persistent job queue, database lifecycle, metrics and CER/WER remain |
+| 6. Benchmark execution and evaluation | In progress | Engine factory, bounded runner, PostgreSQL-backed job queue, authenticated lifecycle API, worker leases, cooperative cancellation, and mocked/API tests implemented; PostgreSQL integration, native engines, evaluation metrics and hard process isolation remain |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
 
@@ -171,3 +171,26 @@ Important limitations:
 - The aggregate rendered-image budget limits total bytes rendered over a run, not just peak resident memory. It is intentionally conservative and configurable.
 - Optional engine configuration must supply vetted local model paths/factories; no request-time model downloads are enabled.
 - Native OCR engine smoke tests and real-model memory profiling remain pending.
+
+
+## Phase 6 follow-up — durable benchmark jobs
+
+Implemented on the current branch:
+- Added the benchmark_jobs ORM model and migration 20261015_0003, persisting owner, source document, engine selection, status, attempt count, timestamps, lease, JSON result and error.
+- Added authenticated endpoints: GET /api/v1/benchmarks/engines, POST /api/v1/benchmarks (202 Accepted), GET /api/v1/benchmarks, GET /api/v1/benchmarks/{job_id}, and DELETE /api/v1/benchmarks/{job_id}. Job history and status are owner-scoped.
+- Added a database-backed polling worker. PostgreSQL FOR UPDATE SKIP LOCKED coordinates claims across worker processes; leases are renewed during execution and expired running jobs can be recovered up to OCR_WORKER_MAX_ATTEMPTS.
+- Added cooperative cancellation at page boundaries and worker-local adapter reuse so model initialization is amortized across jobs.
+- Added configured engine selection. Tesseract is enabled by default; EasyOCR and PaddleOCR require explicit local model directories. docTR remains unavailable through the worker registry until its predictor factory/model-loading configuration is provided.
+- Added tests for authenticated job submission/history/cancellation/ownership, queue claims, lease renewal, and existing OCR orchestration failure/resource scenarios.
+
+Operations:
+- From backend/, apply migrations with `alembic upgrade head`, then run `python -m app.workers.benchmark_worker` in one or more separate worker processes.
+- All workers must share the same PostgreSQL database and, with current local document storage, the same DOCUMENT_STORAGE_ROOT.
+- Worker count controls concurrent jobs across processes. OCR_MAX_CONCURRENT_ENGINES controls inference concurrency inside each job, so the approximate upper bound is worker count multiplied by that setting. Keep both conservative until memory profiling is complete.
+
+Remaining work:
+- Run migration upgrade/downgrade and concurrent-claim/lease-recovery tests against real PostgreSQL; SQLite cannot verify PostgreSQL row-lock semantics.
+- Add hard process isolation for enforceable termination and memory ceilings for native OCR calls.
+- Configure docTR predictor/model loading; run native Tesseract, EasyOCR, and PaddleOCR smoke tests with provisioned local models.
+- Add peak RSS, CPU, cold-start, word count, CER/WER, reference-ground-truth scoring, queue metrics, job retention, and operational health/runbooks.
+- Confirm that deployed workers use shared document storage when running on separate hosts.
