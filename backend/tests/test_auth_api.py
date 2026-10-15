@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.database import get_database_session
 from app.main import app
-import app.models  # noqa: F401 — ensure every ORM model is registered.
+from app import models as _models  # noqa: F401 — register ORM models.
 
 
 @pytest.fixture()
