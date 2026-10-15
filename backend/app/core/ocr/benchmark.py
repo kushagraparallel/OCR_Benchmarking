@@ -132,6 +132,8 @@ class OCRBenchmarkRunner:
         except asyncio.CancelledError:
             logger.info("OCR benchmark cancelled")
             raise
+        except OCRInputError:
+            raise
         except Exception as exc:
             logger.exception("OCR benchmark could not complete PDF rendering")
             if page_count == 0:
