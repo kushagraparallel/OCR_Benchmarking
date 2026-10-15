@@ -115,13 +115,13 @@ Benchmark jobs are persisted in PostgreSQL and executed by a separate worker. OC
 
 ### Start the worker
 
-From the backend directory, run `alembic upgrade head`, then run `python -m app.workers.benchmark_worker` in a separate process. Multiple workers sharing PostgreSQL coordinate claims with `FOR UPDATE SKIP LOCKED`; leases are renewed during long-running jobs and expired jobs are recoverable up to OCR_WORKER_MAX_ATTEMPTS.
+From the backend directory, run `alembic upgrade head`, then run `python -m app.workers.benchmark_worker` in a separate process. Multiple workers sharing PostgreSQL coordinate claims with `FOR UPDATE SKIP LOCKED`. Migration `20261015_0004` adds renewable global capacity slots; `OCR_MAX_CONCURRENT_BENCHMARK_JOBS` caps active jobs across all worker processes. Job and slot leases are renewed during long-running jobs and expired jobs are recoverable up to OCR_WORKER_MAX_ATTEMPTS.
 
 ### Configuration and limits
 
 - OCR_ENABLED_ENGINES defaults to `["tesseract"]`. EasyOCR requires OCR_EASYOCR_MODEL_DIRECTORY to point to pre-provisioned local weights. PaddleOCR requires detection, recognition and classification model directories. Implicit downloads remain disabled.
 - The docTR adapter exists, but its predictor factory/model loading is not yet configurable through the worker registry.
-- OCR_MAX_CONCURRENT_ENGINES is per benchmark job. Total concurrent inference is approximately worker count multiplied by this setting. Keep it at 1 until real model memory is measured.
+- OCR_MAX_CONCURRENT_ENGINES is per benchmark job. The global active-job ceiling is controlled by OCR_MAX_CONCURRENT_BENCHMARK_JOBS, independent of worker count. Total concurrent inference is approximately active-job limit multiplied by this per-job setting. Keep both settings at 1 until real model memory is measured.
 - OCR_ENGINE_TIMEOUT_SECONDS applies per engine per page. Native OCR running in a thread cannot be forcibly terminated; timed-out work retains its concurrency slot until the call exits.
 - OCR_MAX_RENDERED_IMAGE_BYTES limits cumulative rendered PNG bytes per run; it is not a direct resident-memory limit.
 - Every worker must use the same PostgreSQL database and DOCUMENT_STORAGE_ROOT. Workers on separate hosts require shared storage or a future object-storage implementation.
