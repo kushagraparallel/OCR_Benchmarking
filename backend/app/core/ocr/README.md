@@ -98,7 +98,7 @@ GitHub Actions passed on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: Pyth
 - Engine timeouts are recorded independently. Because cancelling a thread wait cannot stop arbitrary native OCR, timed-out work retains its concurrency slot until it actually returns. Configure a process-based worker if hard termination is required.
 - `max_total_rendered_image_bytes` is a per-run aggregate output budget; page count, pixel dimensions, and per-page pixels are independently bounded by `PDFPageRenderer`.
 
-This is currently an in-process orchestration service. Durable job submission/status persistence, API endpoint integration, process isolation, and evaluation metrics are subsequent work. Run the backend test suite from `backend/` with `pytest`; orchestration tests use fake adapters and do not download OCR models.
+The runner is invoked by a separate database-backed worker; the API persists job requests and results. Hard process isolation and evaluation metrics remain outstanding. Run the backend test suite from `backend/` with `pytest`; orchestration tests use fake adapters and do not download OCR models.
 
 
 ## Durable benchmark jobs and API
