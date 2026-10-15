@@ -75,6 +75,9 @@ class OCRBenchmarkRunner:
         self._engine_semaphore = concurrency_semaphore or asyncio.Semaphore(
             self._config.max_concurrent_engines
         )
+        self._pending_native_calls: set[asyncio.Future[OCRResult]] = set()
+        self._native_calls_drained = asyncio.Event()
+        self._native_calls_drained.set()
 
     async def run(
         self,
@@ -208,27 +211,25 @@ class OCRBenchmarkRunner:
         adapter: OCRAdapter,
         image: OCRImage,
     ) -> OCRResult:
-        """Run synchronous inference off-loop and preserve slots after timeout/cancel."""
+        """Run synchronous inference off-loop and keep capacity until native work exits."""
         await self._engine_semaphore.acquire()
         loop = asyncio.get_running_loop()
         future = loop.run_in_executor(None, adapter.recognize, image)
-        try:
-            result = await asyncio.wait_for(
-                asyncio.shield(future),
-                timeout=self._config.engine_timeout_seconds,
-            )
-        except (TimeoutError, asyncio.CancelledError):
-            # Cancelling an await does not stop native OCR already running in a thread.
-            # Keep the slot occupied until that thread has really completed.
-            future.add_done_callback(
-                lambda _: loop.call_soon_threadsafe(self._engine_semaphore.release)
-            )
-            raise
-        except Exception:
+        self._pending_native_calls.add(future)
+        self._native_calls_drained.clear()
+
+        def release_capacity(completed_future: asyncio.Future[OCRResult]) -> None:
+            """Release the shared inference slot only when the worker thread is done."""
+            self._pending_native_calls.discard(completed_future)
             self._engine_semaphore.release()
-            raise
-        self._engine_semaphore.release()
-        return result
+            if not self._pending_native_calls:
+                self._native_calls_drained.set()
+
+        future.add_done_callback(release_capacity)
+        return await asyncio.wait_for(
+            asyncio.shield(future),
+            timeout=self._config.engine_timeout_seconds,
+        )
 
     @staticmethod
     def _validate_adapters(
