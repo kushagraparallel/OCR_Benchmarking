@@ -58,7 +58,8 @@ class PDFPageRenderer:
 
         try:
             document = fitz.open(stream=pdf_bytes, filetype="pdf")
-        except (fitz.FileDataError, ValueError, RuntimeError) as exc:
+        except Exception as exc:
+            # PyMuPDF may raise low-level MuPDF exception subclasses that vary by version.
             raise OCRInputError("The supplied bytes are not a readable PDF.") from exc
 
         with document:
@@ -94,7 +95,7 @@ class PDFPageRenderer:
                     image_bytes = pixmap.tobytes("png")
                 except OCRInputError:
                     raise
-                except (fitz.FitzError, ValueError, RuntimeError) as exc:
+                except Exception as exc:
                     logger.exception("Failed to render PDF page %s", page_number)
                     raise OCRInputError(
                         f"PDF page {page_number} could not be rendered safely."
