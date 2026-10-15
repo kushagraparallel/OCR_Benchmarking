@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     ocr_worker_poll_seconds: float = Field(default=1.0, ge=0.1, le=30, description="Database queue polling interval in seconds.")
     ocr_worker_lease_seconds: int = Field(default=300, ge=30, le=3600, description="Lease duration renewed while a benchmark is running.")
     ocr_worker_max_attempts: int = Field(default=3, ge=1, le=10, description="Maximum recoveries after a worker loses a job lease.")
+    ocr_max_concurrent_benchmark_jobs: int = Field(default=1, ge=1, le=32, description="Deployment-wide active benchmark job limit enforced through PostgreSQL worker slots.")
     ocr_enabled_engines: list[str] = Field(default=["tesseract"], description="Explicitly enabled OCR engine names.")
     ocr_easyocr_model_directory: Path | None = Field(default=None, description="Pre-provisioned EasyOCR model directory; required to enable EasyOCR.")
     ocr_paddle_detection_model_directory: Path | None = Field(default=None, description="Pre-provisioned PaddleOCR detection model directory.")
