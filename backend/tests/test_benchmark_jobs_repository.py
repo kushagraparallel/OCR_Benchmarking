@@ -1,7 +1,6 @@
 """Unit tests for durable benchmark queue claim and lease behavior."""
 
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import timezone
 from uuid import uuid4
 
 from sqlalchemy import create_engine
@@ -24,7 +23,6 @@ def test_claim_commits_running_state_and_renews_lease() -> None:
     )
     Base.metadata.create_all(bind=engine)
     factory = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
-    user_id = None
     document_id = str(uuid4())
 
     try:
@@ -32,7 +30,6 @@ def test_claim_commits_running_state_and_renews_lease() -> None:
             user = User(email="queue-test@example.com", password_hash="test-hash")
             session.add(user)
             session.flush()
-            user_id = user.id
             session.add(
                 DocumentRecord(
                     id=document_id,
