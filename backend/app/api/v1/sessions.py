@@ -21,7 +21,6 @@ def list_user_sessions(user: CurrentUser, database_session: DatabaseSession) -> 
             expires_at=item.expires_at,
             last_used_at=item.last_used_at,
             user_agent=item.user_agent,
-            is_current=False,
         )
         for item in sessions
     ])
