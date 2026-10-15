@@ -41,7 +41,6 @@ class SessionResponse(BaseModel):
     expires_at: datetime
     last_used_at: datetime | None
     user_agent: str | None
-    is_current: bool
 
 
 class SessionListResponse(BaseModel):
