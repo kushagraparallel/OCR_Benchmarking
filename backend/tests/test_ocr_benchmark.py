@@ -242,4 +242,4 @@ async def test_real_pdf_renderer_integrates_with_multiple_engines() -> None:
     assert len(result.engines["first"].results) == 2
     assert len(result.engines["second"].results) == 2
     assert first.seen_images == second.seen_images
-    assert all(payload.startswith(b"\\x89PNG\\r\\n\\x1a\\n") for payload in first.seen_images)
+    assert all(payload.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10])) for payload in first.seen_images)
