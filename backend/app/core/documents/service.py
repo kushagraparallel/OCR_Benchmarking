@@ -9,7 +9,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.core.documents.errors import DocumentNotFoundError, DocumentStorageError, InvalidPdfError
+from app.core.documents.errors import DocumentError, DocumentNotFoundError, DocumentStorageError, InvalidPdfError
 from app.core.documents.pdf_inspector import PdfInspector
 from app.core.documents.storage import LocalDocumentStorage, StagedUpload
 from app.db.repositories.document_repository import DocumentRepository
@@ -62,7 +62,7 @@ class DocumentService:
                     self._storage.delete(storage_key)
                 except DocumentStorageError:
                     logger.exception("Could not clean up a file after failed document persistence")
-            if not isinstance(exc, (InvalidPdfError, DocumentStorageError)):
+            if not isinstance(exc, DocumentError):
                 logger.exception("Unexpected document upload failure")
             raise
         finally:
