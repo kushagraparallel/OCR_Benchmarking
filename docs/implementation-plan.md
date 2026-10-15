@@ -10,7 +10,7 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories and Alembic migrations |
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
-| 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR/PaddleOCR adapters implemented | Normalized result schema, bounded incremental rendering, lazy EasyOCR/PaddleOCR initialization, normalized detection output, mocked adapter tests; native engine validation pending |
+| 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR/PaddleOCR/docTR adapters implemented | Normalized result schema, bounded incremental rendering, lazy model initialization for three optional engines, normalized detection output, mocked adapter tests; native engine validation pending |
 | 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
@@ -114,8 +114,10 @@ Remaining validation:
 - Review OCR text ordering and confidence normalization against a representative corpus.
 
 Remaining:
-- Validate EasyOCR and PaddleOCR on real documents with model files pre-provisioned; measure cold-start time, inference latency, and memory.
-- Add docTR adapter implementing the same contract.
+- Validate EasyOCR, PaddleOCR, and docTR on real documents with model files pre-provisioned; measure cold-start time, inference latency, and memory.
+- Add optional docTR adapter with a required predictor factory so architecture and local-weight policy remain application-controlled.
+- Normalize docTR export page dimensions, relative word geometry, confidence, empty output, and malformed result errors.
+- Add a pinned optional docTR/PyTorch dependency file and mocked adapter tests.
 - Add an adapter registry/factory after the initial adapters are validated.
 - Persist engine configuration/version metadata with benchmark results.
 - Add native-runtime CI coverage and multilingual fixtures.
