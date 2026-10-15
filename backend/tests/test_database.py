@@ -29,7 +29,6 @@ def test_session_can_execute_statement_and_close_cleanly() -> None:
             result = session.execute(text("SELECT 1")).scalar_one()
 
         assert result == 1
-        assert not session.is_active or session.is_active
     finally:
         test_engine.dispose()
 
