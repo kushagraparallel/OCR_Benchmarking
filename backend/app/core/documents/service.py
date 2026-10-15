@@ -55,14 +55,14 @@ class DocumentService:
             self._session.commit()
             self._session.refresh(document)
             return document
-        except Exception:
+        except Exception as exc:
             self._session.rollback()
             if storage_key is not None:
                 try:
                     self._storage.delete(storage_key)
                 except DocumentStorageError:
                     logger.exception("Could not clean up a file after failed document persistence")
-            if not isinstance(exc := __import__("sys").exc_info()[1], (InvalidPdfError, DocumentStorageError)):
+            if not isinstance(exc, (InvalidPdfError, DocumentStorageError)):
                 logger.exception("Unexpected document upload failure")
             raise
         finally:
@@ -83,7 +83,7 @@ class DocumentService:
     def delete_owned(self, document_id: str, user_id: int) -> None:
         """Delete an owned document and its metadata, reporting storage failures."""
         document = self.get_owned(document_id, user_id)
-        self._storage.delete(document.storage_key)
+        storage_key = document.storage_key
         try:
             self._repository.delete(document)
             self._session.commit()
@@ -91,6 +91,10 @@ class DocumentService:
             self._session.rollback()
             logger.exception("Failed to delete document metadata %s", document_id)
             raise
+        # Metadata is removed first, so a storage outage can leave only an inaccessible
+        # orphan file; periodic reconciliation will clean these up. The inverse order
+        # could leave a live database record pointing to a missing file after rollback.
+        self._storage.delete(storage_key)
 
     @staticmethod
     def _sanitize_filename(original_filename: str) -> str:
