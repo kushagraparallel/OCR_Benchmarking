@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Selects docTR's PyTorch backend; validate the resolved torch build for your platform.
+python-doctr[torch]==0.10.0
