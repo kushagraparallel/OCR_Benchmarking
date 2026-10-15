@@ -1,6 +1,7 @@
 """Typed application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=15, ge=1, le=60, description="Access token lifetime in minutes.")
     refresh_token_expire_days: int = Field(default=7, ge=1, le=30, description="Refresh token/session lifetime in days.")
     refresh_cookie_name: str = Field(default="ocrlab_refresh", description="Name of the HttpOnly refresh-token cookie.")
+    document_storage_root: Path = Field(default=Path("./var/ocrlab/documents"), description="Private root directory for uploaded documents.")
+    max_document_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1024, le=250 * 1024 * 1024, description="Maximum uploaded document size in bytes.")
+    max_pdf_pages: int = Field(default=100, ge=1, le=1000, description="Maximum page count accepted per PDF.")
+    max_pdf_page_dimension_points: float = Field(default=14400.0, gt=0, le=14400.0, description="Maximum width or height of a PDF page in points.")
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
