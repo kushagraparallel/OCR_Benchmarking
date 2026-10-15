@@ -28,7 +28,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("email", name="uq_users_email"),
     )
-    op.create_index("ix_users_email", "users", ["email"], unique=True)
     op.create_table(
         "user_sessions",
         sa.Column("id", sa.String(length=36), primary_key=True),
@@ -52,15 +51,12 @@ def upgrade() -> None:
         sa.UniqueConstraint("token_hash", name="uq_refresh_tokens_token_hash"),
     )
     op.create_index("ix_refresh_tokens_session_id", "refresh_tokens", ["session_id"])
-    op.create_index("ix_refresh_tokens_token_hash", "refresh_tokens", ["token_hash"], unique=True)
 
 
 def downgrade() -> None:
     """Drop authentication tables in dependency order."""
-    op.drop_index("ix_refresh_tokens_token_hash", table_name="refresh_tokens")
     op.drop_index("ix_refresh_tokens_session_id", table_name="refresh_tokens")
     op.drop_table("refresh_tokens")
     op.drop_index("ix_user_sessions_user_id", table_name="user_sessions")
     op.drop_table("user_sessions")
-    op.drop_index("ix_users_email", table_name="users")
     op.drop_table("users")
