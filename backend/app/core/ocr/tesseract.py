@@ -12,7 +12,6 @@ from pytesseract import Output
 from pytesseract.pytesseract import (
     TesseractError,
     TesseractNotFoundError,
-    TesseractTimeoutError,
 )
 
 from app.core.ocr.base import OCRAdapter
@@ -83,10 +82,6 @@ class TesseractOCRAdapter(OCRAdapter):
                 output_type=Output.DICT,
                 timeout=self._timeout_seconds,
             )
-        except TesseractTimeoutError as exc:
-            raise OCRExecutionError(
-                f"Tesseract exceeded the {self._timeout_seconds:g}-second timeout."
-            ) from exc
         except TesseractNotFoundError as exc:
             raise OCRDependencyError(
                 "Tesseract is not installed or its executable is not on PATH."
@@ -95,7 +90,14 @@ class TesseractOCRAdapter(OCRAdapter):
             raise OCRExecutionError(
                 "Tesseract could not recognize the supplied image. Check the language data."
             ) from exc
-        except (OSError, RuntimeError) as exc:
+        except RuntimeError as exc:
+            if "timeout" in str(exc).casefold():
+                raise OCRExecutionError(
+                    f"Tesseract exceeded the {self._timeout_seconds:g}-second timeout."
+                ) from exc
+            logger.exception("Tesseract failed while recognizing page %s", image.page_number)
+            raise OCRExecutionError("Tesseract failed to process the image.") from exc
+        except OSError as exc:
             logger.exception("Tesseract failed while recognizing page %s", image.page_number)
             raise OCRExecutionError("Tesseract failed to process the image.") from exc
 
