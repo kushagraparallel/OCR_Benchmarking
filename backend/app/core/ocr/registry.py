@@ -103,3 +103,69 @@ def create_default_ocr_factory(
         factory.register("doctr", lambda: DocTRAdapter(doctr_predictor_factory))
 
     return factory
+
+
+def create_configured_ocr_factory() -> OCREngineFactory:
+    """Build the API/worker engine registry from explicit deployment settings.
+
+    Optional engines are exposed only when selected in configuration and their
+    local model assets are provisioned. The docTR adapter remains opt-in through
+    an application-supplied predictor factory and is therefore not enabled here.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    enabled = {name.strip().casefold() for name in settings.ocr_enabled_engines}
+    supported = {"tesseract", "easyocr", "paddleocr"}
+    unsupported = enabled - supported
+    if unsupported:
+        raise ValueError(
+            "Unsupported configured OCR engine(s): " + ", ".join(sorted(unsupported))
+        )
+
+    factory = OCREngineFactory()
+    if "tesseract" in enabled:
+        from app.core.ocr.tesseract import TesseractOCRAdapter
+
+        factory.register("tesseract", TesseractOCRAdapter)
+
+    if "easyocr" in enabled:
+        if settings.ocr_easyocr_model_directory is None:
+            raise ValueError(
+                "OCR_EASYOCR_MODEL_DIRECTORY is required when EasyOCR is enabled."
+            )
+        from app.core.ocr.easyocr import EasyOCRAdapter
+
+        factory.register(
+            "easyocr",
+            lambda: EasyOCRAdapter(
+                model_storage_directory=settings.ocr_easyocr_model_directory,
+                download_enabled=False,
+            ),
+        )
+
+    if "paddleocr" in enabled:
+        model_paths = (
+            settings.ocr_paddle_detection_model_directory,
+            settings.ocr_paddle_recognition_model_directory,
+            settings.ocr_paddle_classification_model_directory,
+        )
+        if any(path is None for path in model_paths):
+            raise ValueError(
+                "All three PaddleOCR model directories must be configured when "
+                "PaddleOCR is enabled."
+            )
+        from app.core.ocr.paddleocr import PaddleOCRAdapter
+
+        factory.register(
+            "paddleocr",
+            lambda: PaddleOCRAdapter(
+                detection_model_directory=settings.ocr_paddle_detection_model_directory,
+                recognition_model_directory=settings.ocr_paddle_recognition_model_directory,
+                classification_model_directory=settings.ocr_paddle_classification_model_directory,
+            ),
+        )
+
+    if not factory.available_engines():
+        raise ValueError("At least one OCR engine must be enabled.")
+    return factory
