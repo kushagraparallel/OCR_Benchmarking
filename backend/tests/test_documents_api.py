@@ -1,6 +1,7 @@
 """API tests for PDF validation, ownership, and private storage cleanup."""
 
 from collections.abc import Generator
+from pathlib import Path
 from types import SimpleNamespace
 
 import fitz
@@ -17,7 +18,7 @@ from app.main import app
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
     """Provide an isolated database and private document directory for each test."""
     from app.core.documents import service as document_service_module
 
