@@ -1,6 +1,7 @@
 """Bounded PDF-to-image rendering for downstream OCR adapters."""
 
 import logging
+import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -80,8 +81,8 @@ class PDFPageRenderer:
                     page = document.load_page(page_index)
                     page_width = page.rect.width
                     page_height = page.rect.height
-                    width_pixels = int(page_width * scale + 0.5)
-                    height_pixels = int(page_height * scale + 0.5)
+                    width_pixels = math.ceil(page_width * scale)
+                    height_pixels = math.ceil(page_height * scale)
                     self._validate_page_dimensions(
                         page_number=page_number,
                         width_pixels=width_pixels,
