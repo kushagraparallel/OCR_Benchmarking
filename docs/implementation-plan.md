@@ -157,7 +157,7 @@ Dependency installation, database connectivity, migration execution, OCR model d
 ## Phase 6 — Benchmark orchestration (in progress)
 
 Implemented in this step:
-- Add a common OCR engine factory with deterministic engine discovery, duplicate/unknown-name validation, and lazy optional-engine registration.
+- Add a common OCR engine factory with deterministic engine discovery, duplicate/unknown-name validation, and lazy optional-engine registration. (Implemented.)
 - Add validated benchmark configuration for engine timeout, concurrent inferences, and aggregate rendered-image byte budget.
 - Render PDF pages incrementally once and pass the same immutable encoded page bytes to each selected engine.
 - Execute synchronous rendering and OCR in worker threads so they do not block the FastAPI event loop.
@@ -166,8 +166,8 @@ Implemented in this step:
 - Add mocked tests for registry validation, partial failure, shared page bytes, timeout isolation, cancellation propagation, concurrency, oversized PDF page count, and image-byte budgets.
 
 Important limitations:
-- The runner is an in-process service, not yet a durable background job queue. A client disconnect or process restart can interrupt a benchmark.
-- Python cannot forcibly terminate arbitrary native OCR work already running in a thread. Timeouts report the result and keep the concurrency slot reserved until the call exits; use process isolation for hard-kill guarantees in a later worker design.
+- The OCR runner itself is an in-process service invoked by a durable database-backed worker. API requests enqueue work; worker restarts are recoverable through expiring database leases.
+- Python cannot forcibly terminate arbitrary native OCR work already running in a thread. Timeouts report the result and keep the concurrency slot reserved until the call exits; process isolation remains required for hard-kill guarantees.
 - The aggregate rendered-image budget limits total bytes rendered over a run, not just peak resident memory. It is intentionally conservative and configurable.
 - Optional engine configuration must supply vetted local model paths/factories; no request-time model downloads are enabled.
 - Native OCR engine smoke tests and real-model memory profiling remain pending.
