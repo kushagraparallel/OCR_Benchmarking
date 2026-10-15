@@ -4,6 +4,7 @@ import importlib
 import importlib.metadata
 import io
 import logging
+import math
 import threading
 import time
 from pathlib import Path
@@ -170,7 +171,7 @@ class EasyOCRAdapter(OCRAdapter):
             if right < left or bottom < top:
                 raise OCRExecutionError("EasyOCR returned invalid word coordinates.")
             confidence = (
-                confidence_value
+                confidence_value * 100.0
                 if 0.0 <= confidence_value <= 1.0
                 else None
             )
@@ -178,10 +179,10 @@ class EasyOCRAdapter(OCRAdapter):
                 OCRWord(
                     text=text,
                     bounding_box=OCRBoundingBox(
-                        x=max(0, int(left)),
-                        y=max(0, int(top)),
-                        width=max(0, int(right - left)),
-                        height=max(0, int(bottom - top)),
+                        x=max(0, math.floor(left)),
+                        y=max(0, math.floor(top)),
+                        width=max(0, math.ceil(right) - math.floor(left)),
+                        height=max(0, math.ceil(bottom) - math.floor(top)),
                     ),
                     confidence=confidence,
                 )
