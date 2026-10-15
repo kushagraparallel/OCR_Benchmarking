@@ -27,7 +27,7 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("document_id", sa.String(length=36), nullable=False),
+        sa.Column("document_id", sa.String(length=36), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
         sa.Column("engine_names", sa.JSON(), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="queued"),
         sa.Column("result", sa.JSON(), nullable=True),
