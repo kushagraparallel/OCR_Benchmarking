@@ -193,7 +193,8 @@ async def test_rendered_image_budget_is_enforced() -> None:
 
     with pytest.raises(OCRInputError, match="total image-byte limit"):
         await runner.run(b"pdf", {"fake": adapter})
-    assert adapter.seen_images == []
+    # The first page fits the budget; the second page exceeds the cumulative limit.
+    assert adapter.seen_images == [b"123456"]
 
 
 def test_real_renderer_rejects_oversized_pdf_before_page_rendering() -> None:
