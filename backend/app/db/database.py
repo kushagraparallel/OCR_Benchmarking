@@ -11,11 +11,8 @@ from app.config import get_settings
 
 def create_database_engine(database_url: str, **engine_options: Any) -> Engine:
     """Create a SQLAlchemy engine without opening a database connection."""
-    return create_engine(
-        database_url,
-        pool_pre_ping=True,
-        **engine_options,
-    )
+    engine_options.setdefault("pool_pre_ping", True)
+    return create_engine(database_url, **engine_options)
 
 
 settings = get_settings()
@@ -29,7 +26,7 @@ SessionFactory = sessionmaker(
 
 
 def get_database_session() -> Generator[Session, None, None]:
-    """Yield a request-scoped session and reliably close or roll back its work."""
+    """Yield a request-scoped session and reliably roll back failed work."""
     with SessionFactory() as session:
         try:
             yield session
