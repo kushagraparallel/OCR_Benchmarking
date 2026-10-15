@@ -67,10 +67,13 @@ class OCRBenchmarkRunner:
         self,
         renderer: PDFPageRenderer,
         config: BenchmarkConfig | None = None,
+        concurrency_semaphore: asyncio.Semaphore | None = None,
     ) -> None:
         self._renderer = renderer
         self._config = config or BenchmarkConfig()
-        self._engine_semaphore = asyncio.Semaphore(self._config.max_concurrent_engines)
+        self._engine_semaphore = concurrency_semaphore or asyncio.Semaphore(
+            self._config.max_concurrent_engines
+        )
 
     async def run(
         self,
