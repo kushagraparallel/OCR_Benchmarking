@@ -1,7 +1,6 @@
 """Tests for OCR engine registration and bounded benchmark orchestration."""
 
 import asyncio
-import io
 import threading
 import time
 
