@@ -85,7 +85,6 @@ GitHub Actions passed on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: Pyth
 - Validate EasyOCR against a real sample corpus with provisioned model files and benchmark its RAM/latency footprint.
 - Validate PaddleOCR against real documents using pre-provisioned model files; record runtime version, accuracy, cold-start time, latency, and memory.
 - Validate docTR on real documents with a locally configured predictor and provisioned weights; record architecture, cold-start time, inference latency, and memory.
-- Add a registry/factory and benchmark orchestration only after adapter contracts are stable.
 - Record adapter configuration and engine/model versions with each benchmark result.
 - Validate language-specific behavior and reading-order assumptions against a representative document corpus.
 
@@ -100,3 +99,33 @@ GitHub Actions passed on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: Pyth
 - `max_total_rendered_image_bytes` is a per-run aggregate output budget; page count, pixel dimensions, and per-page pixels are independently bounded by `PDFPageRenderer`.
 
 This is currently an in-process orchestration service. Durable job submission/status persistence, API endpoint integration, process isolation, and evaluation metrics are subsequent work. Run the backend test suite from `backend/` with `pytest`; orchestration tests use fake adapters and do not download OCR models.
+
+
+## Durable benchmark jobs and API
+
+Benchmark jobs are persisted in PostgreSQL and executed by a separate worker. OCR does not run inside the API request handler.
+
+### Authenticated endpoints
+
+- `GET /api/v1/benchmarks/engines` lists enabled engines.
+- `POST /api/v1/benchmarks` accepts a document UUID and engine_names list, validates document ownership and engine availability, and returns HTTP 202 with a queued job.
+- `GET /api/v1/benchmarks?limit=20&offset=0` lists the current user's jobs.
+- `GET /api/v1/benchmarks/{job_id}` returns the owner's persisted status and result.
+- `DELETE /api/v1/benchmarks/{job_id}` cancels queued work or requests cooperative cancellation for running work.
+
+### Start the worker
+
+From the backend directory, run `alembic upgrade head`, then run `python -m app.workers.benchmark_worker` in a separate process. Multiple workers sharing PostgreSQL coordinate claims with `FOR UPDATE SKIP LOCKED`; leases are renewed during long-running jobs and expired jobs are recoverable up to OCR_WORKER_MAX_ATTEMPTS.
+
+### Configuration and limits
+
+- OCR_ENABLED_ENGINES defaults to `["tesseract"]`. EasyOCR requires OCR_EASYOCR_MODEL_DIRECTORY to point to pre-provisioned local weights. PaddleOCR requires detection, recognition and classification model directories. Implicit downloads remain disabled.
+- The docTR adapter exists, but its predictor factory/model loading is not yet configurable through the worker registry.
+- OCR_MAX_CONCURRENT_ENGINES is per benchmark job. Total concurrent inference is approximately worker count multiplied by this setting. Keep it at 1 until real model memory is measured.
+- OCR_ENGINE_TIMEOUT_SECONDS applies per engine per page. Native OCR running in a thread cannot be forcibly terminated; timed-out work retains its concurrency slot until the call exits.
+- OCR_MAX_RENDERED_IMAGE_BYTES limits cumulative rendered PNG bytes per run; it is not a direct resident-memory limit.
+- Every worker must use the same PostgreSQL database and DOCUMENT_STORAGE_ROOT. Workers on separate hosts require shared storage or a future object-storage implementation.
+
+### Remaining validation
+
+The queue is database-backed polling, not Redis/Celery. SQLite tests do not prove PostgreSQL locking semantics; run PostgreSQL migration and concurrency tests before production. Native engine smoke tests, hard process isolation, RSS/CPU metrics, CER/WER, queue monitoring and retention remain outstanding.
