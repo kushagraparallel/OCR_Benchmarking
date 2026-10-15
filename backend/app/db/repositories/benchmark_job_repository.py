@@ -78,7 +78,7 @@ class BenchmarkJobRepository:
     def renew_lease(self, job_id: str, lease_seconds: int) -> bool:
         """Renew a running job's lease to prevent duplicate execution."""
         job = self._session.get(BenchmarkJob, job_id)
-        if job is None or job.status != "running":
+        if job is None or job.status not in {"running", "cancellation_requested"}:
             return False
         job.lease_expires_at = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
         self._session.commit()
