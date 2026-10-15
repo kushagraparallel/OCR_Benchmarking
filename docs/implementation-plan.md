@@ -10,8 +10,8 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories and Alembic migrations |
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
-| 5. OCR adapters and PDF rendering | In progress; adapter contract, Tesseract, and bounded PDF renderer implemented | Normalized result schema, incremental page rendering, resource limits, unit tests; native Tesseract smoke test pending |
-| 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
+| 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR/PaddleOCR/docTR adapters implemented | Normalized result schema, bounded incremental rendering, lazy model initialization for three optional engines, normalized detection output, mocked adapter tests; native engine validation pending |
+| 6. Benchmark execution and evaluation | In progress | Engine factory and bounded in-process runner implemented with normalized per-engine outcomes and mocked orchestration tests; persistent job queue, database lifecycle, metrics and CER/WER remain |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
 
@@ -97,6 +97,10 @@ Implemented:
 - Define an abstract adapter contract that is independent of engine-specific packages.
 - Add domain exceptions for unavailable dependencies, invalid image inputs, and engine execution failures.
 - Implement Tesseract using `pytesseract.image_to_data`, preserving line breaks and normalizing confidence and coordinates.
+- Implement optional EasyOCR adapter with lazy imports/model initialization, reusable reader instance, explicit model-download policy, and a lock around model inference.
+- Normalize EasyOCR polygon bounds and convert its 0–1 confidence to the common 0–100 representation.
+- Add a separate optional dependency requirements file so base API installation does not install PyTorch unnecessarily.
+- Add EasyOCR unit tests that mock model initialization and do not download models.
 - Validate image bytes and bound decoded image pixel count; apply a subprocess timeout.
 - Pin `Pillow` and `pytesseract` dependencies and document the separate native Tesseract executable/language-data requirement.
 - Add mocked-engine tests that do not require Tesseract installed in CI.
@@ -110,7 +114,10 @@ Remaining validation:
 - Review OCR text ordering and confidence normalization against a representative corpus.
 
 Remaining:
-- Add EasyOCR, PaddleOCR and docTR adapters implementing the same contract.
+- Validate EasyOCR, PaddleOCR, and docTR on real documents with model files pre-provisioned; measure cold-start time, inference latency, and memory.
+- Add optional docTR adapter with a required predictor factory so architecture and local-weight policy remain application-controlled.
+- Normalize docTR export page dimensions, relative word geometry, confidence, empty output, and malformed result errors.
+- Add a pinned optional docTR/PyTorch dependency file and mocked adapter tests.
 - Add an adapter registry/factory after the initial adapters are validated.
 - Persist engine configuration/version metadata with benchmark results.
 - Add native-runtime CI coverage and multilingual fixtures.
@@ -145,3 +152,22 @@ For each implementation phase:
 6. Report unexecuted checks and external prerequisites explicitly.
 
 Dependency installation, database connectivity, migration execution, OCR model downloads and source compilation are distinct checks and must not be conflated.
+
+
+## Phase 6 — Benchmark orchestration (in progress)
+
+Implemented in this step:
+- Add a common OCR engine factory with deterministic engine discovery, duplicate/unknown-name validation, and lazy optional-engine registration.
+- Add validated benchmark configuration for engine timeout, concurrent inferences, and aggregate rendered-image byte budget.
+- Render PDF pages incrementally once and pass the same immutable encoded page bytes to each selected engine.
+- Execute synchronous rendering and OCR in worker threads so they do not block the FastAPI event loop.
+- Bound OCR inference concurrency and retain a concurrency slot until a timed-out/cancelled native call actually finishes.
+- Record per-engine status, duration, bounded error details, and normalized per-page OCR results; isolate engine exceptions.
+- Add mocked tests for registry validation, partial failure, shared page bytes, timeout isolation, cancellation propagation, concurrency, oversized PDF page count, and image-byte budgets.
+
+Important limitations:
+- The runner is an in-process service, not yet a durable background job queue. A client disconnect or process restart can interrupt a benchmark.
+- Python cannot forcibly terminate arbitrary native OCR work already running in a thread. Timeouts report the result and keep the concurrency slot reserved until the call exits; use process isolation for hard-kill guarantees in a later worker design.
+- The aggregate rendered-image budget limits total bytes rendered over a run, not just peak resident memory. It is intentionally conservative and configurable.
+- Optional engine configuration must supply vetted local model paths/factories; no request-time model downloads are enabled.
+- Native OCR engine smoke tests and real-model memory profiling remain pending.
