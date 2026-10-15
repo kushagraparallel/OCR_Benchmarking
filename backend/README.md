@@ -44,6 +44,10 @@ Open API documentation at \`http://127.0.0.1:8000/docs\`; health check: \`http:/
 
 Protected endpoints require an \`Authorization: Bearer <access_token>\` header. Login/refresh return access tokens in JSON; refresh tokens are only sent as HttpOnly cookies and are never returned in JSON. Browser clients must send credentials for refresh/logout requests.
 
+## OCR adapter foundation
+
+The first OCR adapter is available under `app/core/ocr/`. It defines a shared contract and normalized word-level results, and implements Tesseract recognition. Python packages are installed from the pinned requirements file, but the native Tesseract executable and language data must be installed separately. See [OCR adapter documentation](app/core/ocr/README.md) for installation and validation details.
+
 ## PDF ingestion
 
 - Upload uses multipart/form-data with the field name \`file\`.
