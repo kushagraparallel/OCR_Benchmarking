@@ -3,12 +3,14 @@
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Literal
 
 from app.core.ocr.base import OCRAdapter
 from app.core.ocr.errors import OCRAdapterError, OCRInputError
-from app.core.ocr.pdf_renderer import PDFPageRenderer
+from app.core.ocr.pdf_renderer import PDFPageRenderer, RenderedPDFPage
 from app.core.ocr.schemas import OCRImage, OCRResult
 
 logger = logging.getLogger(__name__)
@@ -66,15 +68,22 @@ class OCRBenchmarkRunner:
         self,
         renderer: PDFPageRenderer,
         config: BenchmarkConfig | None = None,
+        concurrency_semaphore: asyncio.Semaphore | None = None,
     ) -> None:
         self._renderer = renderer
         self._config = config or BenchmarkConfig()
-        self._engine_semaphore = asyncio.Semaphore(self._config.max_concurrent_engines)
+        self._engine_semaphore = concurrency_semaphore or asyncio.Semaphore(
+            self._config.max_concurrent_engines
+        )
+        self._pending_native_calls: set[asyncio.Future[OCRResult]] = set()
+        self._native_calls_drained = asyncio.Event()
+        self._native_calls_drained.set()
 
     async def run(
         self,
         pdf_bytes: bytes,
         adapters: dict[str, OCRAdapter],
+        should_cancel: Callable[[], Awaitable[bool]] | None = None,
     ) -> BenchmarkResult:
         """Execute engines independently and preserve successful partial results."""
         if not adapters:
@@ -88,12 +97,20 @@ class OCRBenchmarkRunner:
         active_names = set(normalized_adapters)
         page_count = 0
         rendered_bytes = 0
-        page_iterator = None
+        engine_durations = {name: 0.0 for name in normalized_adapters}
+        renderer_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr-pdf-render")
+        event_loop = asyncio.get_running_loop()
 
         try:
-            page_iterator = await asyncio.to_thread(iter, self._renderer.render_pages(pdf_bytes))
+            page_iterator = await event_loop.run_in_executor(
+                renderer_executor, iter, self._renderer.render_pages(pdf_bytes)
+            )
             while True:
-                page = await asyncio.to_thread(self._next_page, page_iterator)
+                if should_cancel is not None and await should_cancel():
+                    raise asyncio.CancelledError("Benchmark cancellation requested.")
+                page = await event_loop.run_in_executor(
+                    renderer_executor, self._next_page, page_iterator
+                )
                 if page is None:
                     break
                 page_count += 1
@@ -104,6 +121,9 @@ class OCRBenchmarkRunner:
                     )
 
                 image = OCRImage(page.image_bytes, page.page_number)
+                page_task_started = {
+                    name: time.perf_counter() for name in active_names
+                }
                 page_tasks = {
                     name: asyncio.create_task(
                         self._recognize_page(normalized_adapters[name], image)
@@ -114,6 +134,9 @@ class OCRBenchmarkRunner:
                     *page_tasks.values(), return_exceptions=True
                 )
                 for name, outcome in zip(page_tasks, outcomes, strict=True):
+                    engine_durations[name] += (
+                        time.perf_counter() - page_task_started[name]
+                    ) * 1000
                     if isinstance(outcome, BaseException):
                         result = engine_results[name]
                         result.status = (
@@ -142,9 +165,15 @@ class OCRBenchmarkRunner:
                 engine_results[name].status = "failed"
                 engine_results[name].error = self._safe_error_message(exc)
             active_names.clear()
+        finally:
+            # PyMuPDF's document iterator must be advanced on one consistent thread.
+            # Wait for an in-flight page render to finish before shutting its executor down.
+            await asyncio.to_thread(
+                renderer_executor.shutdown, wait=True, cancel_futures=True
+            )
 
-        for result in engine_results.values():
-            result.duration_ms = round((time.perf_counter() - started) * 1000, 3)
+        for name, result in engine_results.items():
+            result.duration_ms = round(engine_durations[name], 3)
             if result.status == "success" and not result.results:
                 result.status = "failed"
                 result.error = "The engine did not return any page results."
@@ -171,7 +200,7 @@ class OCRBenchmarkRunner:
         )
 
     @staticmethod
-    def _next_page(page_iterator):
+    def _next_page(page_iterator: Iterator[RenderedPDFPage]) -> RenderedPDFPage | None:
         """Advance a lazy renderer without leaking StopIteration through asyncio."""
         sentinel = object()
         page = next(page_iterator, sentinel)
@@ -182,27 +211,25 @@ class OCRBenchmarkRunner:
         adapter: OCRAdapter,
         image: OCRImage,
     ) -> OCRResult:
-        """Run synchronous inference off-loop and preserve slots after timeout/cancel."""
+        """Run synchronous inference off-loop and keep capacity until native work exits."""
         await self._engine_semaphore.acquire()
         loop = asyncio.get_running_loop()
         future = loop.run_in_executor(None, adapter.recognize, image)
-        try:
-            result = await asyncio.wait_for(
-                asyncio.shield(future),
-                timeout=self._config.engine_timeout_seconds,
-            )
-        except (TimeoutError, asyncio.CancelledError):
-            # Cancelling an await does not stop native OCR already running in a thread.
-            # Keep the slot occupied until that thread has really completed.
-            future.add_done_callback(
-                lambda _: loop.call_soon_threadsafe(self._engine_semaphore.release)
-            )
-            raise
-        except Exception:
+        self._pending_native_calls.add(future)
+        self._native_calls_drained.clear()
+
+        def release_capacity(completed_future: asyncio.Future[OCRResult]) -> None:
+            """Release the shared inference slot only when the worker thread is done."""
+            self._pending_native_calls.discard(completed_future)
             self._engine_semaphore.release()
-            raise
-        self._engine_semaphore.release()
-        return result
+            if not self._pending_native_calls:
+                self._native_calls_drained.set()
+
+        future.add_done_callback(release_capacity)
+        return await asyncio.wait_for(
+            asyncio.shield(future),
+            timeout=self._config.engine_timeout_seconds,
+        )
 
     @staticmethod
     def _validate_adapters(

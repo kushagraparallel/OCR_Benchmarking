@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     max_document_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1024, le=250 * 1024 * 1024, description="Maximum uploaded document size in bytes.")
     max_pdf_pages: int = Field(default=100, ge=1, le=1000, description="Maximum page count accepted per PDF.")
     max_pdf_page_dimension_points: float = Field(default=14400.0, gt=0, le=14400.0, description="Maximum width or height of a PDF page in points.")
+    ocr_engine_timeout_seconds: float = Field(default=120.0, gt=0, le=3600, description="Per-engine per-page timeout.")
+    ocr_max_concurrent_engines: int = Field(default=1, ge=1, le=4, description="Maximum concurrent engine inferences within one worker process.")
+    ocr_max_rendered_image_bytes: int = Field(default=268435456, ge=1048576, le=2147483648, description="Maximum cumulative rendered PNG bytes per benchmark.")
+    ocr_worker_poll_seconds: float = Field(default=1.0, ge=0.1, le=30, description="Database queue polling interval in seconds.")
+    ocr_worker_lease_seconds: int = Field(default=300, ge=30, le=3600, description="Lease duration renewed while a benchmark is running.")
+    ocr_worker_max_attempts: int = Field(default=3, ge=1, le=10, description="Maximum recoveries after a worker loses a job lease.")
+    ocr_max_concurrent_benchmark_jobs: int = Field(default=1, ge=1, le=32, description="Deployment-wide active benchmark job limit enforced through PostgreSQL worker slots.")
+    ocr_enabled_engines: list[str] = Field(default=["tesseract"], description="Explicitly enabled OCR engine names.")
+    ocr_easyocr_model_directory: Path | None = Field(default=None, description="Pre-provisioned EasyOCR model directory; required to enable EasyOCR.")
+    ocr_paddle_detection_model_directory: Path | None = Field(default=None, description="Pre-provisioned PaddleOCR detection model directory.")
+    ocr_paddle_recognition_model_directory: Path | None = Field(default=None, description="Pre-provisioned PaddleOCR recognition model directory.")
+    ocr_paddle_classification_model_directory: Path | None = Field(default=None, description="Pre-provisioned PaddleOCR angle-classification model directory.")
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
