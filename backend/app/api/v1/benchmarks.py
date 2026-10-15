@@ -11,7 +11,7 @@ from app.core.benchmarks.service import (
     InvalidBenchmarkStateError,
 )
 from app.core.documents.errors import DocumentNotFoundError
-from app.core.ocr.registry import create_default_ocr_factory
+from app.core.ocr.registry import create_configured_ocr_factory
 from app.schemas.benchmarks import (
     BenchmarkJobCreateRequest,
     BenchmarkJobListResponse,
@@ -23,7 +23,14 @@ router = APIRouter(prefix="/benchmarks", tags=["benchmarks"])
 
 def _service(database_session: DatabaseSession) -> BenchmarkJobService:
     """Build a request-scoped job service with engines supported by this API."""
-    return BenchmarkJobService(database_session, create_default_ocr_factory())
+    return BenchmarkJobService(database_session, create_configured_ocr_factory())
+
+
+@router.get("/engines", response_model=list[str])
+def list_available_engines(user: CurrentUser) -> list[str]:
+    """List OCR engines enabled by deployment configuration."""
+    del user
+    return list(create_configured_ocr_factory().available_engines())
 
 
 @router.post("", response_model=BenchmarkJobResponse, status_code=status.HTTP_202_ACCEPTED)
