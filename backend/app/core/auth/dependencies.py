@@ -56,3 +56,6 @@ def get_current_user(
     ):
         raise unauthorized
     return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
