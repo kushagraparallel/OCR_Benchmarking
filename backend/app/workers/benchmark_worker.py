@@ -16,14 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.documents.storage import LocalDocumentStorage
 from app.core.ocr.base import OCRAdapter
-from app.core.ocr.benchmark import BenchmarkConfig, OCRBenchmarkRunner
+from app.core.ocr.benchmark import BenchmarkConfig, BenchmarkResult, OCRBenchmarkRunner
 from app.core.ocr.pdf_renderer import PDFPageRenderer
-from app.core.ocr.registry import create_configured_ocr_factory
+from app.core.ocr.registry import OCREngineFactory, create_configured_ocr_factory
 from app.db.database import SessionFactory
 from app.db.repositories.benchmark_job_repository import BenchmarkJobRepository
 from app.models.benchmark_job import BenchmarkJob
@@ -31,8 +30,8 @@ from app.models.document import DocumentRecord
 
 logger = logging.getLogger(__name__)
 _STOP_REQUESTED = False
-_WORKER_FACTORY = None
-_WORKER_ADAPTERS = {}
+_WORKER_FACTORY: OCREngineFactory | None = None
+_WORKER_ADAPTERS: dict[str, OCRAdapter] = {}
 
 
 def _request_stop(signum: int, frame: object) -> None:
@@ -130,7 +129,7 @@ def _get_worker_adapters(engine_names: list[str]) -> dict[str, OCRAdapter]:
     return {name: _WORKER_ADAPTERS[name] for name in engine_names}
 
 
-def _serialize_result(result: object) -> dict[str, Any]:
+def _serialize_result(result: BenchmarkResult) -> dict[str, Any]:
     """Convert benchmark dataclasses into JSON-compatible result structures."""
     return asdict(result)
 
