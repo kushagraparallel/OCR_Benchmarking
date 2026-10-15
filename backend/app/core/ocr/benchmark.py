@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 from typing import Literal
@@ -95,13 +96,19 @@ class OCRBenchmarkRunner:
         rendered_bytes = 0
         engine_durations = {name: 0.0 for name in normalized_adapters}
         page_iterator = None
+        renderer_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr-pdf-render")
+        event_loop = asyncio.get_running_loop()
 
         try:
-            page_iterator = await asyncio.to_thread(iter, self._renderer.render_pages(pdf_bytes))
+            page_iterator = await event_loop.run_in_executor(
+                renderer_executor, iter, self._renderer.render_pages(pdf_bytes)
+            )
             while True:
                 if should_cancel is not None and await should_cancel():
                     raise asyncio.CancelledError("Benchmark cancellation requested.")
-                page = await asyncio.to_thread(self._next_page, page_iterator)
+                page = await event_loop.run_in_executor(
+                    renderer_executor, self._next_page, page_iterator
+                )
                 if page is None:
                     break
                 page_count += 1
@@ -156,6 +163,12 @@ class OCRBenchmarkRunner:
                 engine_results[name].status = "failed"
                 engine_results[name].error = self._safe_error_message(exc)
             active_names.clear()
+        finally:
+            # PyMuPDF's document iterator must be advanced on one consistent thread.
+            # Wait for an in-flight page render to finish before shutting its executor down.
+            await asyncio.to_thread(
+                renderer_executor.shutdown, wait=True, cancel_futures=True
+            )
 
         for name, result in engine_results.items():
             result.duration_ms = round(engine_durations[name], 3)
