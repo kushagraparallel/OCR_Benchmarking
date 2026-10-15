@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app import models as _models  # noqa: F401 — register ORM metadata.
 from app.db.base import Base
 from app.db.repositories.benchmark_job_repository import BenchmarkJobRepository
+from app.db.repositories.benchmark_worker_slot_repository import BenchmarkWorkerSlotRepository
 from app.models.document import DocumentRecord
 from app.models.user import User
 
@@ -74,6 +75,39 @@ def test_claim_commits_running_state_and_renews_lease() -> None:
             original = original_expiry.replace(tzinfo=timezone.utc)
             renewed_expiry = renewed.lease_expires_at.replace(tzinfo=timezone.utc)
             assert renewed_expiry > original
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+def test_worker_slots_enforce_shared_capacity_and_release() -> None:
+    """Only the configured number of worker processes can reserve active slots."""
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
+
+    try:
+        with factory() as session:
+            repository = BenchmarkWorkerSlotRepository(session)
+            repository.ensure_capacity(max_slots=1)
+            first_slot = repository.acquire("worker-a", max_slots=1, lease_seconds=60)
+            assert first_slot == 1
+
+        with factory() as session:
+            repository = BenchmarkWorkerSlotRepository(session)
+            assert repository.acquire("worker-b", max_slots=1, lease_seconds=60) is None
+            assert repository.renew(first_slot, "worker-a", lease_seconds=60)
+            repository.release(first_slot, "worker-a")
+
+        with factory() as session:
+            second_slot = BenchmarkWorkerSlotRepository(session).acquire(
+                "worker-b", max_slots=1, lease_seconds=60
+            )
+            assert second_slot == first_slot
     finally:
         Base.metadata.drop_all(bind=engine)
         engine.dispose()
