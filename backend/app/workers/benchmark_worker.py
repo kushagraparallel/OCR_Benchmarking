@@ -31,6 +31,8 @@ from app.models.document import DocumentRecord
 
 logger = logging.getLogger(__name__)
 _STOP_REQUESTED = False
+_WORKER_FACTORY = None
+_WORKER_ADAPTERS = {}
 
 
 def _request_stop(signum: int, frame: object) -> None:
@@ -102,6 +104,24 @@ async def _lease_heartbeat(job_id: str, lease_seconds: int) -> None:
             return
 
 
+
+def _get_worker_adapters(engine_names: list[str]):
+    """Reuse initialized adapter instances for the lifetime of this worker process."""
+    global _WORKER_FACTORY
+    if _WORKER_FACTORY is None:
+        _WORKER_FACTORY = create_configured_ocr_factory()
+
+    available = set(_WORKER_FACTORY.available_engines())
+    unknown = sorted(set(engine_names) - available)
+    if unknown:
+        raise ValueError(f"Unconfigured OCR engine(s): {', '.join(unknown)}.")
+
+    for engine_name in engine_names:
+        if engine_name not in _WORKER_ADAPTERS:
+            _WORKER_ADAPTERS[engine_name] = _WORKER_FACTORY.create(engine_name)
+    return {name: _WORKER_ADAPTERS[name] for name in engine_names}
+
+
 def _serialize_result(result: object) -> dict[str, Any]:
     """Convert benchmark dataclasses into JSON-compatible result structures."""
     return asdict(result)
@@ -121,8 +141,7 @@ async def _execute_job(job_id: str) -> None:
     try:
         pdf_path: Path = storage.resolve_storage_key(storage_key)
         pdf_bytes = await asyncio.to_thread(pdf_path.read_bytes)
-        factory = create_configured_ocr_factory()
-        adapters = factory.create_many(engine_names)
+        adapters = _get_worker_adapters(engine_names)
         runner = OCRBenchmarkRunner(
             PDFPageRenderer(
                 max_pages=settings.max_pdf_pages,
