@@ -7,13 +7,13 @@ This document is the source of truth for implemented scope, outstanding work, an
 | Phase | Status | Notes |
 |---|---|---|
 | 1. Repository and API foundation | Implemented; CI verified | FastAPI app factory, typed settings, versioned health endpoint and automated checks |
-| 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories, Alembic and authentication schema migration |
-| 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation, session endpoints and API tests |
-| 4. PDF ingestion | Not started | PDF validation, limits, private storage and metadata |
+| 2. Persistence foundation | Implemented foundation; PostgreSQL validation pending | SQLAlchemy engine/session/base, repositories and Alembic migrations |
+| 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
+| 4. PDF ingestion | Implemented; CI pending for this phase | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
 | 5. OCR adapters | Not started | Tesseract, EasyOCR, PaddleOCR and docTR |
 | 6. Benchmark execution and evaluation | Not started | Worker queue, run lifecycle, metrics, CER/WER |
 | 7. Frontend and reporting | Not started | React UI, charts and exports |
-| 8. Hardening and deployment | Partial foundations only | CI and security design docs exist; production hardening and deployment remain |
+| 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
 
 ## Phase 1 — Repository and API foundation
 
@@ -22,13 +22,14 @@ Implemented:
 - Environment-based Pydantic settings.
 - FastAPI application factory and /api/v1/health.
 - Initial API tests and pinned dependencies.
-- GitHub Actions workflow for Python compilation and pytest.
+- GitHub Actions workflow for Python compilation, migration SQL generation and pytest.
 
-Validation:
-- GitHub Actions passed on commit `6322d4c293ff78ca6f0ae5bb867c04fe016972c2`: compileall, offline Alembic migration generation, and 14 tests passed.
+Previously verified:
+- CI passed on commit \`6322d4c293ff78ca6f0ae5bb867c04fe016972c2\`: compilation, offline Alembic SQL generation and 14 tests.
 - Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38720555786
 
 Remaining:
+- Re-run CI for the current document-ingestion changes.
 - Add linting and type checking with pinned tool versions.
 - Add request IDs and consistent structured error responses in a later hardening pass.
 
@@ -39,18 +40,12 @@ Implemented:
 - Shared application engine and session factory.
 - Request-scoped session dependency with rollback on propagated exceptions.
 - Shared declarative base and repository layer.
-- Alembic configuration/environment/template.
-- Initial migration creating users, user_sessions and refresh_tokens.
+- Alembic configuration and migrations for users, user_sessions, refresh_tokens and documents.
 - SQLite-backed unit-test support.
-
-Validation:
-- Alembic offline SQL generation succeeds in CI.
-- PostgreSQL migration upgrade/downgrade and database-backed integration testing have not yet been run.
 
 Remaining:
 - Verify migration upgrade/downgrade against PostgreSQL.
 - Add PostgreSQL service-backed CI integration tests.
-- Add explicit database readiness checks when application operations require database availability.
 - Review schema diffs and migration naming on each schema change.
 
 ## Phase 3 — Authentication and sessions
@@ -62,29 +57,38 @@ Implemented:
 - Opaque high-entropy refresh tokens; only SHA-256 digests are stored.
 - Refresh-token rotation and consumed-token replay detection that revokes the affected session.
 - HttpOnly refresh cookie with Secure enabled in production and SameSite=Strict.
-- Active-user/session validation on protected requests; revoked/expired sessions invalidate access tokens.
+- Active-user/session validation on protected requests.
 - Logout, logout-all, current-user profile, session listing and owner-scoped session revocation.
-- Authentication API integration tests and security primitive tests.
-- Authentication architecture and known-limitations documentation.
-
-Validation:
-- CI passed on commit `6322d4c293ff78ca6f0ae5bb867c04fe016972c2`: compilation, migration SQL generation, and 14 tests passed.
-- The integration tests use in-memory SQLite. They do not validate PostgreSQL migration behavior or refresh-token concurrency on PostgreSQL.
+- Authentication API tests and security primitive tests.
 
 Remaining:
 - Add PostgreSQL migration and refresh-concurrency tests.
 - Add login/register rate limiting before public deployment.
 - Add email verification, password reset and account recovery.
-- Add CSRF protection if deployment topology requires cross-site cookies; current design assumes same-site frontend/API.
+- Add CSRF protection if deployment topology requires cross-site cookies.
 - Consider account lockout/abuse monitoring and security audit events.
 - Add lint/type-check rules and coverage thresholds.
 
 ## Phase 4 — PDF ingestion
 
-- Validate actual PDF content, file size, page count and rendered page dimensions.
-- Generate safe storage identifiers; keep uploads outside the public web root.
-- Extract PDF metadata and distinguish digital/scanned/mixed pages where feasible.
-- Add retention and deletion behavior.
+Implemented in this step:
+- Add a document metadata ORM model and versioned Alembic migration.
+- Add a repository with owner-scoped lookup, listing and deletion.
+- Stream uploaded content into private staging storage in bounded chunks; enforce byte limits and calculate SHA-256.
+- Validate PDF signature and parser readability; reject empty, malformed, encrypted, zero-page, too-many-page, and excessive-dimension documents.
+- Sanitize the display filename and generate server-side storage keys.
+- Persist bounded metadata and expose authenticated upload/list/get/delete endpoints.
+- Keep internal storage paths and content digests out of API responses.
+- Add tests for valid uploads, malformed input, size/page limits, authentication, UUID validation, lifecycle and cross-user isolation.
+
+Remaining / known limitations:
+- Confirm current changes pass CI; do not assume the prior CI result validates this phase.
+- Test migrations against PostgreSQL.
+- Add periodic orphan-file reconciliation for crashes and filesystem/database failures.
+- Add a storage interface and private object-storage adapter before multi-instance deployment.
+- Add antivirus/malware scanning, retention automation, upload-rate limits and deployment-level request-body limits.
+- Implement PDF page rendering, digital/scanned page classification and extraction of page images.
+- Evaluate page-dimension limits against expected real-world PDFs and add fixtures for malformed/encrypted edge cases.
 
 ## Phase 5 — OCR adapters
 
@@ -115,10 +119,11 @@ Remaining:
 ## Validation policy
 
 For each implementation phase:
-1. Run Python compilation and focused tests.
-2. Run the full backend test suite.
-3. Confirm CI status before describing checks as passing.
-4. Test migrations against PostgreSQL when schema changes are introduced.
-5. Report unexecuted checks and external prerequisites explicitly.
+1. Inspect current files and callers before modifying them.
+2. Run Python compilation and focused tests.
+3. Run the full backend test suite.
+4. Confirm CI status before describing checks as passing.
+5. Test migrations against PostgreSQL when schema changes are introduced.
+6. Report unexecuted checks and external prerequisites explicitly.
 
 Dependency installation, database connectivity, migration execution, OCR model downloads and source compilation are distinct checks and must not be conflated.
