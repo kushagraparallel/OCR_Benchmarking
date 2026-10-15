@@ -44,10 +44,13 @@ class AuthRepository:
         return token_record
 
     def get_refresh_token(self, token_hash: str) -> RefreshToken | None:
-        """Load a refresh token and its session/account in one query path."""
-        statement = select(RefreshToken).options(
-            selectinload(RefreshToken.session).selectinload(UserSession.user)
-        ).where(RefreshToken.token_hash == token_hash)
+        """Load and lock a refresh token and its session/account when supported."""
+        statement = (
+            select(RefreshToken)
+            .options(selectinload(RefreshToken.session).selectinload(UserSession.user))
+            .where(RefreshToken.token_hash == token_hash)
+            .with_for_update()
+        )
         return self._session.scalar(statement)
 
     def get_session(self, session_id: str) -> UserSession | None:
@@ -60,7 +63,7 @@ class AuthRepository:
         return list(self._session.scalars(statement).all())
 
     def revoke_session(self, user_session: UserSession, revoked_at: datetime) -> None:
-        """Revoke a session and all currently active refresh tokens for it."""
+        """Revoke a session and all active refresh tokens for it."""
         user_session.revoked_at = revoked_at
         self._session.execute(
             update(RefreshToken)
