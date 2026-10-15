@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
 
-from app.core.documents.errors import DocumentStorageError, DocumentTooLargeError
+from app.core.documents.errors import DocumentStorageError, DocumentTooLargeError, InvalidPdfError
 
 logger = logging.getLogger(__name__)
 CHUNK_SIZE_BYTES = 1024 * 1024
@@ -58,7 +58,7 @@ class LocalDocumentStorage:
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
             if total_bytes == 0:
-                raise DocumentStorageError("The uploaded file is empty.")
+                raise InvalidPdfError("The uploaded file is empty.")
             return StagedUpload(temporary_path, total_bytes, digest.hexdigest())
         except Exception:
             if temporary_path is not None:
