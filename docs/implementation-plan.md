@@ -25,8 +25,8 @@ Implemented:
 - GitHub Actions workflow for Python compilation and pytest.
 
 Validation:
-- GitHub Actions passed on commit `9ef1f505077557b12c50d4cb1123b1cdc8506f97`: compileall, offline Alembic migration generation, and 12 tests passed.
-- Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38720437656
+- GitHub Actions passed on commit `6322d4c293ff78ca6f0ae5bb867c04fe016972c2`: compileall, offline Alembic migration generation, and 14 tests passed.
+- Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38720555786
 
 Remaining:
 - Add linting and type checking with pinned tool versions.
@@ -68,7 +68,7 @@ Implemented:
 - Authentication architecture and known-limitations documentation.
 
 Validation:
-- CI passed on commit `9ef1f505077557b12c50d4cb1123b1cdc8506f97`: compilation, migration SQL generation, and 12 tests passed.
+- CI passed on commit `6322d4c293ff78ca6f0ae5bb867c04fe016972c2`: compilation, migration SQL generation, and 14 tests passed.
 - The integration tests use in-memory SQLite. They do not validate PostgreSQL migration behavior or refresh-token concurrency on PostgreSQL.
 
 Remaining:
