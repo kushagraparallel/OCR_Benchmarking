@@ -79,6 +79,15 @@ class OCRBenchmarkRunner:
         self._native_calls_drained = asyncio.Event()
         self._native_calls_drained.set()
 
+    async def wait_for_native_calls(self) -> None:
+        """Block until every in-flight native OCR call has released its capacity slot.
+
+        A cancelled or timed-out ``run()`` can return while an adapter's worker
+        thread is still executing. Callers that release shared deployment-wide
+        capacity right after ``run()`` must await this first.
+        """
+        await self._native_calls_drained.wait()
+
     async def run(
         self,
         pdf_bytes: bytes,

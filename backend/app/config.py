@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     ocr_paddle_detection_model_directory: Path | None = Field(default=None, description="Pre-provisioned PaddleOCR detection model directory.")
     ocr_paddle_recognition_model_directory: Path | None = Field(default=None, description="Pre-provisioned PaddleOCR recognition model directory.")
     ocr_paddle_classification_model_directory: Path | None = Field(default=None, description="Pre-provisioned PaddleOCR angle-classification model directory.")
+    ocr_doctr_det_arch: str = Field(default="db_resnet50", description="docTR text-detection architecture name.")
+    ocr_doctr_reco_arch: str = Field(default="crnn_vgg16_bn", description="docTR text-recognition architecture name.")
+    ocr_doctr_cache_directory: Path | None = Field(default=None, description="Pre-provisioned docTR weights cache directory; required to enable docTR.")
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":

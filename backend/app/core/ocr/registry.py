@@ -1,6 +1,7 @@
 """Registry and factory for configured OCR engine adapters."""
 
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
 from app.core.ocr.base import OCRAdapter
@@ -109,14 +110,13 @@ def create_configured_ocr_factory() -> OCREngineFactory:
     """Build the API/worker engine registry from explicit deployment settings.
 
     Optional engines are exposed only when selected in configuration and their
-    local model assets are provisioned. The docTR adapter remains opt-in through
-    an application-supplied predictor factory and is therefore not enabled here.
+    local model assets are provisioned.
     """
     from app.config import get_settings
 
     settings = get_settings()
     enabled = {name.strip().casefold() for name in settings.ocr_enabled_engines}
-    supported = {"tesseract", "easyocr", "paddleocr"}
+    supported = {"tesseract", "easyocr", "paddleocr", "doctr"}
     unsupported = enabled - supported
     if unsupported:
         raise ValueError(
@@ -166,6 +166,47 @@ def create_configured_ocr_factory() -> OCREngineFactory:
             ),
         )
 
+    if "doctr" in enabled:
+        if settings.ocr_doctr_cache_directory is None:
+            raise ValueError(
+                "OCR_DOCTR_CACHE_DIRECTORY is required when docTR is enabled."
+            )
+        from app.core.ocr.doctr import DocTRAdapter
+
+        factory.register(
+            "doctr",
+            lambda: DocTRAdapter(
+                _build_doctr_predictor_factory(
+                    settings.ocr_doctr_det_arch,
+                    settings.ocr_doctr_reco_arch,
+                    settings.ocr_doctr_cache_directory,
+                )
+            ),
+        )
+
     if not factory.available_engines():
         raise ValueError("At least one OCR engine must be enabled.")
     return factory
+
+
+def _build_doctr_predictor_factory(
+    det_arch: str, reco_arch: str, cache_directory: Path
+) -> Callable[[], Any]:
+    """Build a predictor factory that loads docTR weights from a fixed local cache.
+
+    ``DOCTR_CACHE_DIR`` must be set before docTR's model-loading helpers resolve
+    their weight paths, so it is set here rather than at process startup; this
+    keeps the cache location tied to the engine actually being enabled.
+    Downloads are not re-triggered as long as ``cache_directory`` already holds
+    the pretrained weights docTR expects (see backend/app/core/ocr/README.md).
+    """
+
+    def _build() -> Any:
+        import os
+
+        os.environ["DOCTR_CACHE_DIR"] = str(cache_directory)
+        from doctr.models import ocr_predictor
+
+        return ocr_predictor(det_arch=det_arch, reco_arch=reco_arch, pretrained=True)
+
+    return _build

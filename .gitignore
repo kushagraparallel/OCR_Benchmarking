@@ -18,6 +18,7 @@ venv/
 data/
 *.sqlite3
 *.db
+backend/var/
 
 # Frontend
 node_modules/

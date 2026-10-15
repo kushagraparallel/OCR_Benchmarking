@@ -11,8 +11,8 @@ This document is the source of truth for implemented scope, outstanding work, an
 | 3. Authentication and sessions | Implemented; baseline CI passing | Argon2id, JWT access tokens, hashed rotating refresh tokens, revocation and session endpoints |
 | 4. PDF ingestion | Implemented; CI verified | Validated uploads, private local storage, metadata, ownership checks and lifecycle API |
 | 5. OCR adapters and PDF rendering | In progress; shared contract, Tesseract, PDF renderer, and optional EasyOCR/PaddleOCR/docTR adapters implemented | Normalized result schema, bounded incremental rendering, lazy model initialization for three optional engines, normalized detection output, mocked adapter tests; native engine validation pending |
-| 6. Benchmark execution and evaluation | In progress | Engine factory, bounded runner, PostgreSQL-backed job queue, authenticated lifecycle API, worker leases, cooperative cancellation, and mocked/API tests implemented; PostgreSQL integration, native engines, evaluation metrics and hard process isolation remain |
-| 7. Frontend and reporting | Not started | React UI, charts and exports |
+| 6. Benchmark execution and evaluation | In progress; native Tesseract path verified end-to-end | Engine factory, bounded runner, PostgreSQL-backed job queue, authenticated lifecycle API, worker leases, cooperative cancellation, and mocked/API tests implemented; a missing `wait_for_native_calls` method was found and fixed during end-to-end verification (see Phase 6 follow-up). EasyOCR/PaddleOCR/docTR native validation, evaluation metrics and hard process isolation remain |
+| 7. Frontend and reporting | Implemented (initial) | React/TypeScript console (`frontend/`) covering auth, documents, benchmarks and sessions against the live API; charts and exports not started |
 | 8. Hardening and deployment | Partial foundations only | CI and security docs exist; production hardening and deployment remain |
 
 ## Phase 1 — Repository and API foundation
@@ -110,7 +110,8 @@ Verified on commit `b2bd38c5e809f990f4dbb444904964191a2ee36d`: compilation, offl
 Verified on commit `a56731e5b17598ba49a514ab54b3156de4fd1c01`: Python compilation, offline Alembic SQL generation, and the backend test suite passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38732468400
 
 Remaining validation:
-- Run a native Tesseract smoke test in an environment with the executable and English trained data installed.
+- Native Tesseract smoke test passed end-to-end through the real queue/worker path (register → upload → submit → poll → `completed`, with normalized per-page text, word boxes and confidence). See Phase 6 follow-up.
+- Run equivalent smoke tests for EasyOCR and PaddleOCR once local model directories are provisioned.
 - Review OCR text ordering and confidence normalization against a representative corpus.
 
 Remaining:
@@ -131,9 +132,20 @@ Remaining:
 
 ## Phase 7 — Frontend and reporting
 
-- React/TypeScript app with authentication, upload, benchmark configuration, history and results.
+Implemented:
+- React 19 + TypeScript console under `frontend/` (Vite, React Router, TanStack Query; no UI framework — hand-written CSS design system).
+- Auth: login/register, in-memory access token, silent session restore on reload via the backend's HttpOnly refresh cookie, transparent 401 refresh-and-retry.
+- Documents: drag-and-drop upload, owner-scoped list, delete.
+- Benchmarks: engine-selection modal sourced from `/benchmarks/engines`, job submission, history list that polls while any job is active, and a detail view with per-engine tabs showing per-page text, word count, average confidence and duration; cancel for queued/running jobs.
+- Sessions: list, "this device" detection (decoded JWT `sid`, display only), revoke one or all.
+- Verified with a real backend (PostgreSQL + native Tesseract worker) via a scripted headless-browser pass covering the full golden path, plus manual screenshot review; not added as an automated/CI-run test suite yet.
+
+Remaining:
+- Automated frontend tests (component/e2e) wired into CI; the Playwright pass used for verification was ad hoc and not committed.
 - Charts for latency, throughput, memory and ground-truth metrics.
 - CSV/PDF exports and clear labeling of unavailable metrics.
+- Document detail/preview beyond metadata (no backend endpoint currently serves PDF bytes back to the client).
+- Pagination controls in the UI (API supports `limit`/`offset`; the console currently fetches a single bounded page).
 
 ## Phase 8 — Hardening and deployment
 
@@ -188,9 +200,12 @@ Operations:
 - All workers must share the same PostgreSQL database and, with current local document storage, the same DOCUMENT_STORAGE_ROOT.
 - `OCR_MAX_CONCURRENT_BENCHMARK_JOBS` enforces a shared active-job ceiling across all worker processes. Worker count controls available processing capacity but cannot exceed the slot limit. `OCR_MAX_CONCURRENT_ENGINES` controls inference concurrency inside each job, so the approximate inference ceiling is configured active jobs multiplied by per-job inference concurrency.
 
+Fixed during end-to-end verification:
+- `app/workers/benchmark_worker.py` called `OCRBenchmarkRunner.wait_for_native_calls()` after `run()` to keep deployment-wide capacity reserved until native OCR threads actually exit, but `OCRBenchmarkRunner` never defined that method — every job failed with `AttributeError` immediately after rendering/recognition completed, before any job had ever reached `completed`. Added the method in `app/core/ocr/benchmark.py`; it awaits the existing `_native_calls_drained` event. Verified fixed by running a job to `completed` against native Tesseract. Full backend suite (73 tests) still passes.
+
 Remaining work:
-- Run migration upgrade/downgrade and concurrent-claim/lease-recovery tests against real PostgreSQL; SQLite cannot verify PostgreSQL row-lock semantics.
+- Run migration upgrade/downgrade and concurrent-claim/lease-recovery tests against real PostgreSQL; SQLite cannot verify PostgreSQL row-lock semantics. (Migrations themselves were applied successfully against a live PostgreSQL instance during this session; concurrent-claim/lease-recovery behavior under real contention is still unverified.)
 - Add hard process isolation for enforceable termination and memory ceilings for native OCR calls.
-- Configure docTR predictor/model loading; run native Tesseract, EasyOCR, and PaddleOCR smoke tests with provisioned local models.
+- Configure docTR predictor/model loading; run native EasyOCR and PaddleOCR smoke tests with provisioned local models (Tesseract's smoke test now passes — see above).
 - Add peak RSS, CPU, cold-start, word count, CER/WER, reference-ground-truth scoring, queue metrics, job retention, and operational health/runbooks.
 - Confirm that deployed workers use shared document storage when running on separate hosts.

@@ -21,6 +21,11 @@ The repository uses separate `frontend/` and `backend/` applications. The backen
 
 The repository is being implemented in small, verifiable phases. See `docs/implementation-plan.md` for milestones and validation commands.
 
+## Running locally
+
+1. Backend: follow `backend/README.md` (PostgreSQL, migrations, `uvicorn`, and a worker process via `python -m app.workers.benchmark_worker`).
+2. Frontend: follow `frontend/README.md` (`npm install && npm run dev`), served at `http://localhost:5173` by default, matching the backend's default CORS configuration.
+
 ## Security
 
 Never commit `.env` files, production secrets, uploaded documents, model weights, or generated benchmark output. Copy `backend/.env.example` to a local environment file and configure development-only credentials before running the application.

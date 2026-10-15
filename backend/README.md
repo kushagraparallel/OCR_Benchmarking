@@ -40,6 +40,11 @@ Open API documentation at \`http://127.0.0.1:8000/docs\`; health check: \`http:/
 | GET | \`/api/v1/documents\` | List owned documents with pagination |
 | GET | \`/api/v1/documents/{document_id}\` | Retrieve owned document metadata |
 | DELETE | \`/api/v1/documents/{document_id}\` | Delete an owned document |
+| GET | \`/api/v1/benchmarks/engines\` | List OCR engines enabled by deployment configuration |
+| POST | \`/api/v1/benchmarks\` | Queue a benchmark job for an uploaded document (202 Accepted) |
+| GET | \`/api/v1/benchmarks\` | List the authenticated user's benchmark job history |
+| GET | \`/api/v1/benchmarks/{job_id}\` | Retrieve a benchmark job's status and normalized OCR results |
+| DELETE | \`/api/v1/benchmarks/{job_id}\` | Cancel a queued job, or request cancellation of a running one |
 | GET | \`/api/v1/health\` | API liveness check |
 
 Protected endpoints require an \`Authorization: Bearer <access_token>\` header. Login/refresh return access tokens in JSON; refresh tokens are only sent as HttpOnly cookies and are never returned in JSON. Browser clients must send credentials for refresh/logout requests.
@@ -47,6 +52,20 @@ Protected endpoints require an \`Authorization: Bearer <access_token>\` header. 
 ## OCR adapter foundation
 
 The OCR layer under `app/core/ocr/` defines a shared adapter contract, implements Tesseract, and includes bounded incremental PDF-to-PNG page rendering. The renderer enforces configurable DPI, page-count, dimension, and pixel limits. Python packages are installed from the pinned requirements file, but the native Tesseract executable and language data must be installed separately. See [OCR adapter documentation](app/core/ocr/README.md) for setup and validation details.
+
+## Benchmark execution
+
+Benchmark jobs are queued through the API and executed by a separate worker process, never inline in a request handler:
+
+\`\`\`powershell
+$env:PYTHONPATH = "."
+python -m app.workers.benchmark_worker
+\`\`\`
+
+- Workers share one PostgreSQL-backed queue (\`benchmark_jobs\`) and coordinate deployment-wide concurrency through leased rows in \`benchmark_worker_slots\` (migration \`20261015_0004\`). \`OCR_MAX_CONCURRENT_BENCHMARK_JOBS\` caps how many jobs run at once across all worker processes, independent of how many worker processes you start.
+- All workers must reach the same database and, with the current local storage adapter, the same \`DOCUMENT_STORAGE_ROOT\`.
+- A worker that is killed without a clean shutdown (e.g. a forced process kill, not SIGINT/SIGTERM) leaves its job and worker-slot leases to expire naturally via \`OCR_WORKER_LEASE_SECONDS\`; another worker then recovers the job, up to \`OCR_WORKER_MAX_ATTEMPTS\`.
+- Verified end-to-end against a native Tesseract installation: register → upload → submit → poll → \`completed\` with normalized per-page text, word boxes, and confidence.
 
 ## PDF ingestion
 
@@ -73,7 +92,9 @@ Configure these with \`DOCUMENT_STORAGE_ROOT\`, \`MAX_DOCUMENT_UPLOAD_BYTES\`, \
 - \`app/models/\`: user, session, refresh-token, and document ORM models.
 - \`migrations/versions/20261015_0001_auth_tables.py\`: initial authentication schema.
 - \`migrations/versions/20261015_0002_documents.py\`: document metadata schema.
-- \`app/core/auth/service.py\` and \`app/core/documents/service.py\`: domain use cases and transaction boundaries.
+- \`migrations/versions/20261015_0003_*.py\`: durable benchmark job queue and result storage.
+- \`migrations/versions/20261015_0004_*.py\`: shared worker capacity slots for deployment-wide concurrency.
+- \`app/core/auth/service.py\`, \`app/core/documents/service.py\`, and \`app/core/benchmarks/service.py\`: domain use cases and transaction boundaries.
 
 Run migrations from \`backend/\` after configuring a reachable development database:
 
@@ -95,6 +116,8 @@ python -m pytest backend/tests -q
 \`\`\`
 
 GitHub Actions passed on commit `c862ecbab097837ca3c529ec5d0feafbedcb918e`: Python compilation, offline Alembic SQL generation, and 21 tests passed. Run: https://github.com/kushagraparallel/OCR_Benchmarking/actions/runs/38724195724. Document API tests use an isolated in-memory SQLite database and temporary private storage. They do not establish PostgreSQL migration compatibility or production filesystem durability.
+
+Locally re-verified against a live PostgreSQL instance (not yet re-run in CI): migrations applied cleanly with \`alembic upgrade head\`, and the full suite (73 tests) passed. This run also exercised the worker against native Tesseract end-to-end and caught a real defect: \`benchmark_worker.py\` called \`OCRBenchmarkRunner.wait_for_native_calls()\`, which did not exist, so every job failed with \`AttributeError\` before completing. Fixed in \`app/core/ocr/benchmark.py\` by adding the method (it awaits the existing \`_native_calls_drained\` event). This closes the "run a native Tesseract smoke test" item from the OCR adapter validation backlog.
 
 ## Security boundaries and known gaps
 
