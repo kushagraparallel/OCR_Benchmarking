@@ -2,8 +2,10 @@
 
 from collections.abc import Generator
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -50,8 +52,20 @@ def upload_pdf(client: TestClient, headers: dict[str, str]) -> str:
     return response.json()["id"]
 
 
-def test_authenticated_benchmark_job_lifecycle(tmp_path: Path) -> None:
+def test_authenticated_benchmark_job_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A user can queue, inspect, and cancel a benchmark for their own PDF."""
+    from app.core.documents import service as document_service_module
+
+    monkeypatch.setattr(
+        document_service_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            document_storage_root=tmp_path / "private-documents",
+            max_document_upload_bytes=1024 * 1024,
+            max_pdf_pages=10,
+            max_pdf_page_dimension_points=14400.0,
+        ),
+    )
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
